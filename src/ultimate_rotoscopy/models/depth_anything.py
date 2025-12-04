@@ -1,8 +1,19 @@
 """
-Depth Anything V3 Integration
-=============================
+Depth Anything V2 Integration (NeurIPS 2024)
+=============================================
 
 State-of-the-art monocular depth estimation for professional VFX workflows.
+
+Depth Anything V2 improvements over V1:
+- Much finer and more robust depth predictions
+- Trained on ~600K synthetic + ~62M real images
+- Uses DPT architecture with DINOv2 backbone
+- State-of-the-art for both relative and absolute depth
+
+Model IDs (HuggingFace):
+- depth-anything/Depth-Anything-V2-Large-hf (recommended)
+- depth-anything/Depth-Anything-V2-Base-hf
+- depth-anything/Depth-Anything-V2-Small-hf
 
 Features:
 - High-resolution depth maps
@@ -36,11 +47,11 @@ from ultimate_rotoscopy.models.base import (
 
 
 class DepthModelSize(Enum):
-    """Available Depth Anything model sizes."""
-    SMALL = "depth_anything_v3_small"
-    BASE = "depth_anything_v3_base"
-    LARGE = "depth_anything_v3_large"
-    GIANT = "depth_anything_v3_giant"
+    """Available Depth Anything V2 model sizes."""
+    SMALL = "depth_anything_v2_small"
+    BASE = "depth_anything_v2_base"
+    LARGE = "depth_anything_v2_large"
+    GIANT = "depth_anything_v2_large"  # No giant in V2, alias to large
 
 
 class DepthOutputType(Enum):
@@ -60,10 +71,10 @@ class NormalSpace(Enum):
 
 @dataclass
 class DepthConfig(ModelConfig):
-    """Depth Anything V3 configuration."""
+    """Depth Anything V2 configuration (NeurIPS 2024)."""
     model_size: DepthModelSize = DepthModelSize.LARGE
     output_type: DepthOutputType = DepthOutputType.RELATIVE
-    encoder_name: str = "vitl"  # vits, vitb, vitl, vitg
+    encoder_name: str = "vitl"  # vits, vitb, vitl (DINOv2 backbone)
     max_depth: float = 100.0    # Maximum depth in meters (for metric)
     min_depth: float = 0.01    # Minimum depth in meters
     use_metric_head: bool = True
@@ -90,7 +101,9 @@ class DepthResult:
 
 class DepthAnythingV3(BaseModel):
     """
-    Depth Anything V3 for Ultimate Rotoscopy.
+    Depth Anything V2 for Ultimate Rotoscopy (NeurIPS 2024).
+
+    Note: Class named V3 for backwards compatibility, uses V2 models.
 
     Provides comprehensive depth estimation capabilities:
     - High-quality monocular depth estimation
@@ -120,11 +133,11 @@ class DepthAnythingV3(BaseModel):
         self._camera_intrinsics: Optional[np.ndarray] = None
 
     def load(self) -> None:
-        """Load Depth Anything V3 model."""
+        """Load Depth Anything V2 model (NeurIPS 2024)."""
         if self._is_loaded:
             return
 
-        print(f"Loading Depth Anything V3 {self.depth_config.model_size.value}...")
+        print(f"Loading Depth Anything V2 {self.depth_config.model_size.value}...")
         start_time = time.time()
 
         try:
@@ -139,7 +152,7 @@ class DepthAnythingV3(BaseModel):
         self._is_loaded = True
 
         load_time = time.time() - start_time
-        print(f"Depth Anything V3 loaded in {load_time:.2f}s on {self.device}")
+        print(f"Depth Anything V2 loaded in {load_time:.2f}s on {self.device}")
 
     def _load_from_transformers(self) -> None:
         """Load using HuggingFace transformers."""
@@ -309,12 +322,12 @@ class DepthAnythingV3(BaseModel):
         ))
 
     def _get_model_id(self) -> str:
-        """Get HuggingFace model ID."""
+        """Get HuggingFace model ID for Depth Anything V2."""
         model_map = {
             DepthModelSize.SMALL: "depth-anything/Depth-Anything-V2-Small-hf",
             DepthModelSize.BASE: "depth-anything/Depth-Anything-V2-Base-hf",
             DepthModelSize.LARGE: "depth-anything/Depth-Anything-V2-Large-hf",
-            DepthModelSize.GIANT: "depth-anything/Depth-Anything-V2-Giant-hf",
+            DepthModelSize.GIANT: "depth-anything/Depth-Anything-V2-Large-hf",  # No giant in V2
         }
         return model_map.get(self.depth_config.model_size, "depth-anything/Depth-Anything-V2-Large-hf")
 
