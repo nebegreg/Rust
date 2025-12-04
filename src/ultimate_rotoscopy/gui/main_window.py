@@ -44,6 +44,15 @@ from PySide6.QtGui import (
     QMouseEvent, QPainterPath, QTransform,
 )
 
+# Processing backend
+try:
+    from ultimate_rotoscopy.gui.backend import (
+        ProcessingBackend, ProcessingStage, ProcessingResult
+    )
+    BACKEND_AVAILABLE = True
+except ImportError:
+    BACKEND_AVAILABLE = False
+
 
 class ToolMode(Enum):
     """Available tools for interaction."""
@@ -742,8 +751,21 @@ class MainWindow(QMainWindow):
         self._current_image: Optional[np.ndarray] = None
         self._current_matte: Optional[np.ndarray] = None
         self._current_depth: Optional[np.ndarray] = None
+        self._current_normals: Optional[np.ndarray] = None
+        self._current_composite: Optional[np.ndarray] = None
         self._background: Optional[np.ndarray] = None
         self._project = ProjectSettings()
+
+        # Prompt points for SAM
+        self._fg_points: List[Tuple[int, int]] = []
+        self._bg_points: List[Tuple[int, int]] = []
+        self._current_box: Optional[Tuple[int, int, int, int]] = None
+
+        # Processing backend
+        self._backend: Optional[ProcessingBackend] = None
+        if BACKEND_AVAILABLE:
+            self._backend = ProcessingBackend(self)
+            self._connect_backend_signals()
 
         # Setup UI
         self._setup_menus()
@@ -754,6 +776,144 @@ class MainWindow(QMainWindow):
 
         # Load settings
         self._load_settings()
+
+        # Load models on startup (async)
+        if self._backend:
+            QTimer.singleShot(500, self._initialize_backend)
+
+    def _connect_backend_signals(self):
+        """Connect backend signals to GUI handlers."""
+        if self._backend:
+            self._backend.processing_started.connect(self._on_processing_started)
+            self._backend.processing_progress.connect(self._on_processing_progress)
+            self._backend.processing_finished.connect(self._on_processing_finished)
+            self._backend.processing_error.connect(self._on_processing_error)
+            self._backend.model_loaded.connect(self._on_model_loaded)
+            self._backend.gpu_memory_updated.connect(self._on_gpu_memory_updated)
+
+    def _initialize_backend(self):
+        """Initialize backend and load models."""
+        self.statusBar().showMessage("Loading AI models...")
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+
+        params = self.params_panel.get_parameters()
+        self._backend.load_models({
+            "models": ["sam", "depth", "matting"],
+            "sam_model": params.get("sam_model", "SAM2.1 Large"),
+            "depth_model": params.get("depth_model", "Depth Anything V2 Large"),
+        })
+
+    @Slot(str)
+    def _on_processing_started(self, stage: str):
+        """Handle processing started."""
+        self.statusBar().showMessage(f"Processing: {stage}...")
+        self.progress.setVisible(True)
+        self.progress.setValue(0)
+        self._set_buttons_enabled(False)
+
+    @Slot(int, str)
+    def _on_processing_progress(self, percent: int, message: str):
+        """Handle progress update."""
+        self.progress.setValue(percent)
+        self.statusBar().showMessage(message)
+
+    @Slot(object)
+    def _on_processing_finished(self, result: ProcessingResult):
+        """Handle processing completed."""
+        self._set_buttons_enabled(True)
+
+        if not result.success:
+            QMessageBox.warning(self, "Processing Error", result.error or "Unknown error")
+            self.progress.setVisible(False)
+            return
+
+        # Update display based on result type
+        if result.stage == ProcessingStage.LOADING_MODELS:
+            self.statusBar().showMessage("Models loaded successfully")
+            self.progress.setVisible(False)
+
+        elif result.stage == ProcessingStage.SEGMENTATION:
+            self._current_matte = result.mask
+            self._display_result("Matte", result.mask)
+            self.statusBar().showMessage("Segmentation complete")
+
+        elif result.stage == ProcessingStage.MATTING:
+            self._current_matte = result.alpha
+            self._display_result("Matte", result.alpha)
+            self.statusBar().showMessage("Matting complete")
+
+        elif result.stage == ProcessingStage.DEPTH:
+            self._current_depth = result.depth
+            self._current_normals = result.normals
+            output_type = self.params_panel.depth_output.currentText()
+            if output_type == "Normal Map" and result.normals is not None:
+                self._display_normals(result.normals)
+            else:
+                self._display_result("Depth", result.depth)
+            self.statusBar().showMessage("Depth estimation complete")
+
+        elif result.stage == ProcessingStage.COMPOSITING:
+            self._current_composite = result.composite
+            self._display_result("Composite", result.composite)
+            self.statusBar().showMessage("Compositing complete")
+
+        QTimer.singleShot(2000, lambda: self.progress.setVisible(False))
+
+    @Slot(str)
+    def _on_processing_error(self, error: str):
+        """Handle processing error."""
+        self.progress.setVisible(False)
+        self._set_buttons_enabled(True)
+        QMessageBox.critical(self, "Error", f"Processing failed:\n{error}")
+
+    @Slot(str)
+    def _on_model_loaded(self, model_name: str):
+        """Handle model loaded."""
+        self.statusBar().showMessage(f"Loaded: {model_name}")
+
+    @Slot(float, float)
+    def _on_gpu_memory_updated(self, used: float, total: float):
+        """Update GPU memory display."""
+        self.mem_label.setText(f"VRAM: {used:.1f} / {total:.1f} GB")
+
+    def _set_buttons_enabled(self, enabled: bool):
+        """Enable/disable processing buttons."""
+        self.params_panel.segment_btn.setEnabled(enabled)
+        self.params_panel.matte_btn.setEnabled(enabled)
+        self.params_panel.depth_btn.setEnabled(enabled)
+        self.params_panel.composite_btn.setEnabled(enabled)
+
+    def _display_result(self, layer_name: str, data: np.ndarray):
+        """Display processing result on canvas."""
+        if data is None:
+            return
+
+        # Normalize to 0-255 uint8
+        if data.dtype == np.float32 or data.dtype == np.float64:
+            if data.max() <= 1.0:
+                display = (data * 255).astype(np.uint8)
+            else:
+                display = ((data - data.min()) / (data.max() - data.min() + 1e-8) * 255).astype(np.uint8)
+        else:
+            display = data
+
+        # Convert single channel to RGB for display
+        if display.ndim == 2:
+            display = np.stack([display] * 3, axis=-1)
+
+        # Set overlay on canvas
+        self.canvas.set_overlay(display, opacity=self.overlay_slider.value() / 100.0)
+
+        # Update view combo
+        self.view_combo.setCurrentText(layer_name if layer_name in ["Source", "Matte", "Composite", "Depth"] else "Matte")
+
+    def _display_normals(self, normals: np.ndarray):
+        """Display normal map with proper visualization."""
+        # Normals are in [-1, 1], convert to [0, 1] for display
+        display = (normals + 1.0) / 2.0
+        display = (display * 255).astype(np.uint8)
+        self.canvas.set_overlay(display, opacity=self.overlay_slider.value() / 100.0)
 
     def _setup_menus(self):
         """Setup application menus."""
@@ -956,9 +1116,15 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
 
     def closeEvent(self, event):
-        """Save settings on close."""
+        """Save settings on close and cleanup."""
+        # Save settings
         settings = QSettings("UltimateRotoscopy", "App")
         settings.setValue("geometry", self.saveGeometry())
+
+        # Shutdown backend
+        if self._backend:
+            self._backend.shutdown()
+
         super().closeEvent(event)
 
     def _set_tool(self, mode: ToolMode):
@@ -976,12 +1142,17 @@ class MainWindow(QMainWindow):
 
     def _on_point_added(self, x: int, y: int, label: int):
         """Handle point prompt added."""
+        if label == 1:
+            self._fg_points.append((x, y))
+        else:
+            self._bg_points.append((x, y))
         self.statusBar().showMessage(
             f"{'Foreground' if label == 1 else 'Background'} point added at ({x}, {y})"
         )
 
     def _on_box_drawn(self, x1: int, y1: int, x2: int, y2: int):
         """Handle bounding box drawn."""
+        self._current_box = (x1, y1, x2, y2)
         self.statusBar().showMessage(f"Box: ({x1}, {y1}) to ({x2}, {y2})")
 
     def _on_frame_changed(self, frame: int):
@@ -1054,64 +1225,132 @@ class MainWindow(QMainWindow):
 
     def _run_segmentation(self):
         """Run SAM2 segmentation."""
-        self.statusBar().showMessage("Running segmentation...")
-        self.progress.setVisible(True)
-        self.progress.setValue(0)
+        if self._current_image is None:
+            QMessageBox.warning(self, "No Image", "Please load an image first.")
+            return
 
-        # Get prompts from canvas
+        if not self._backend:
+            QMessageBox.warning(self, "Backend Not Available", "Processing backend not initialized.")
+            return
+
+        # Collect prompts
+        points = list(self._fg_points) + list(self._bg_points)
+        labels = [1] * len(self._fg_points) + [0] * len(self._bg_points)
+
+        if not points and not self._current_box:
+            QMessageBox.warning(self, "No Prompts", "Add points (F/B keys) or draw a box (X key) first.")
+            return
+
         params = self.params_panel.get_parameters()
 
-        # TODO: Run actual segmentation
-        # For now, just show placeholder
-        self.progress.setValue(100)
-        self.statusBar().showMessage("Segmentation complete")
+        # Convert image to uint8 if needed
+        image = self._current_image
+        if image.dtype == np.float32 or image.dtype == np.float64:
+            image = (image * 255).astype(np.uint8)
 
-        QTimer.singleShot(1000, lambda: self.progress.setVisible(False))
+        self._backend.run_segmentation(
+            image=image,
+            points=points if points else None,
+            point_labels=labels if labels else None,
+            box=self._current_box,
+            params=params,
+        )
 
     def _run_matting(self):
         """Run AI matting."""
-        self.statusBar().showMessage("Running matting...")
-        self.progress.setVisible(True)
-        self.progress.setValue(0)
+        if self._current_image is None:
+            QMessageBox.warning(self, "No Image", "Please load an image first.")
+            return
+
+        if not self._backend:
+            QMessageBox.warning(self, "Backend Not Available", "Processing backend not initialized.")
+            return
 
         params = self.params_panel.get_parameters()
 
-        # TODO: Run actual matting
+        # Convert image to uint8 if needed
+        image = self._current_image
+        if image.dtype == np.float32 or image.dtype == np.float64:
+            image = (image * 255).astype(np.uint8)
 
-        self.progress.setValue(100)
-        self.statusBar().showMessage("Matting complete")
-
-        QTimer.singleShot(1000, lambda: self.progress.setVisible(False))
+        self._backend.run_matting(
+            image=image,
+            mask=self._current_matte,
+            params=params,
+        )
 
     def _run_depth(self):
         """Run depth estimation."""
-        self.statusBar().showMessage("Running depth estimation...")
-        self.progress.setVisible(True)
-        self.progress.setValue(0)
+        if self._current_image is None:
+            QMessageBox.warning(self, "No Image", "Please load an image first.")
+            return
+
+        if not self._backend:
+            QMessageBox.warning(self, "Backend Not Available", "Processing backend not initialized.")
+            return
 
         params = self.params_panel.get_parameters()
 
-        # TODO: Run actual depth estimation
+        # Convert image to uint8 if needed
+        image = self._current_image
+        if image.dtype == np.float32 or image.dtype == np.float64:
+            image = (image * 255).astype(np.uint8)
 
-        self.progress.setValue(100)
-        self.statusBar().showMessage("Depth estimation complete")
-
-        QTimer.singleShot(1000, lambda: self.progress.setVisible(False))
+        self._backend.run_depth(
+            image=image,
+            params=params,
+        )
 
     def _run_composite(self):
         """Run compositing pipeline."""
-        self.statusBar().showMessage("Running compositing...")
-        self.progress.setVisible(True)
-        self.progress.setValue(0)
+        if self._current_image is None:
+            QMessageBox.warning(self, "No Image", "Please load an image first.")
+            return
+
+        if self._background is None:
+            QMessageBox.warning(self, "No Background", "Please import a background image first.")
+            return
+
+        if self._current_matte is None:
+            QMessageBox.warning(self, "No Matte", "Please run segmentation or matting first.")
+            return
+
+        if not self._backend:
+            QMessageBox.warning(self, "Backend Not Available", "Processing backend not initialized.")
+            return
 
         params = self.params_panel.get_parameters()
 
-        # TODO: Run actual compositing
+        # Convert images to uint8 if needed
+        foreground = self._current_image
+        if foreground.dtype == np.float32 or foreground.dtype == np.float64:
+            foreground = (foreground * 255).astype(np.uint8)
 
-        self.progress.setValue(100)
-        self.statusBar().showMessage("Compositing complete")
+        background = self._background
+        if background.dtype == np.float32 or background.dtype == np.float64:
+            background = (background * 255).astype(np.uint8)
 
-        QTimer.singleShot(1000, lambda: self.progress.setVisible(False))
+        # Resize background to match foreground if needed
+        if background.shape[:2] != foreground.shape[:2]:
+            import cv2
+            background = cv2.resize(background, (foreground.shape[1], foreground.shape[0]))
+
+        alpha = self._current_matte
+
+        self._backend.run_compositing(
+            image=foreground,
+            background=background,
+            alpha=alpha,
+            params=params,
+        )
+
+    def _clear_prompts(self):
+        """Clear all prompts."""
+        self._fg_points.clear()
+        self._bg_points.clear()
+        self._current_box = None
+        self.canvas.clear_prompts()
+        self.statusBar().showMessage("Prompts cleared")
 
 
 def main():
