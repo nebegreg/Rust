@@ -9,18 +9,30 @@ A comprehensive rotoscopy application leveraging cutting-edge AI models:
 - Matte Anything for professional-grade alpha matting
 - MatAnyone for consistent video matting with memory propagation (CVPR 2025)
 - GVM (Generative Video Matting) for diffusion-based fine detail
+- ViTMatte for transformer-based matting with automatic trimap
+- OmniMatte for video layer decomposition with effects
+- Background Matting V2 for real-time matting without green screen
 
 Professional compositing pipeline:
 - Advanced despill algorithms (Average, Maximum, Double Average, Adaptive)
 - Pixel spread / edge extend
 - Light wrap for photorealistic integration
 - Color harmonization (LAB transfer, Reinhard, Adaptive)
+- Shadow and AO extraction from depth
+- ACES color management (ACEScg, ACEScc)
+- HDR processing and tone mapping
+
+Performance & Integration:
+- OpenFX plugins for Nuke/Flame/Resolve
+- ONNX/TensorRT acceleration
+- Multi-GPU distributed processing
+- Intelligent caching system
 
 Designed for professional VFX artists working with tools like Autodesk Flame.
 Following ILM StageCraft-style workflows for cinema-quality compositing.
 """
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 __author__ = "Ultimate Rotoscopy Team"
 
 # Core
