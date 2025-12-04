@@ -194,22 +194,50 @@ class ProcessingWorker(QObject):
             self._load_sam_transformers(params)
 
     def _load_sam_transformers(self, params: Dict[str, Any]):
-        """Load SAM via transformers."""
-        from transformers import SamModel, SamProcessor
+        """Load SAM2 via transformers (latest version)."""
         import torch
 
-        model_id = "facebook/sam-vit-large"
+        model_size_str = params.get("sam_model", "SAM2.1 Large")
 
-        self._sam_processor = SamProcessor.from_pretrained(model_id)
-        self._sam_model = SamModel.from_pretrained(model_id).to(self._device)
-        self._sam_model.eval()
+        # SAM2.1 model IDs (released 09/30/2024)
+        sam2_model_map = {
+            "SAM2.1 Large": "facebook/sam2.1-hiera-large",
+            "SAM2.1 Base+": "facebook/sam2.1-hiera-base-plus",
+            "SAM2.1 Small": "facebook/sam2.1-hiera-small",
+            "SAM2.1 Tiny": "facebook/sam2.1-hiera-tiny",
+        }
+
+        model_id = sam2_model_map.get(model_size_str, "facebook/sam2.1-hiera-large")
+
+        try:
+            # Try SAM2 first (transformers >= 4.45)
+            from transformers import Sam2Model, Sam2Processor
+
+            self._sam_processor = Sam2Processor.from_pretrained(model_id)
+            self._sam_model = Sam2Model.from_pretrained(model_id).to(self._device)
+            self._sam_model.eval()
+            self._sam_version = 2
+
+            print(f"Loaded SAM2.1: {model_id}")
+
+        except ImportError:
+            # Fallback to SAM1 if SAM2 not available
+            print("SAM2 not available in transformers, falling back to SAM1")
+            from transformers import SamModel, SamProcessor
+
+            model_id = "facebook/sam-vit-large"
+            self._sam_processor = SamProcessor.from_pretrained(model_id)
+            self._sam_model = SamModel.from_pretrained(model_id).to(self._device)
+            self._sam_model.eval()
+            self._sam_version = 1
 
         # Create a wrapper
         class SAMWrapper:
-            def __init__(self, model, processor, device):
+            def __init__(self, model, processor, device, version=2):
                 self.model = model
                 self.processor = processor
                 self.device = device
+                self.version = version
                 self._image_embedding = None
 
             def load(self):
@@ -277,7 +305,7 @@ class ProcessingWorker(QObject):
 
                 return result
 
-        self._sam = SAMWrapper(self._sam_model, self._sam_processor, self._device)
+        self._sam = SAMWrapper(self._sam_model, self._sam_processor, self._device, self._sam_version)
 
     def _load_depth(self, params: Dict[str, Any]):
         """Load depth estimation model."""
@@ -306,11 +334,22 @@ class ProcessingWorker(QObject):
             self._load_depth_transformers(params)
 
     def _load_depth_transformers(self, params: Dict[str, Any]):
-        """Load depth via transformers."""
+        """Load Depth Anything V2 via transformers (NeurIPS 2024)."""
         from transformers import AutoImageProcessor, AutoModelForDepthEstimation
         import torch
 
-        model_id = "depth-anything/Depth-Anything-V2-Large-hf"
+        model_size_str = params.get("depth_model", "Depth Anything V2 Large")
+
+        # Depth Anything V2 model IDs (NeurIPS 2024)
+        depth_model_map = {
+            "Depth Anything V2 Large": "depth-anything/Depth-Anything-V2-Large-hf",
+            "Depth Anything V2 Base": "depth-anything/Depth-Anything-V2-Base-hf",
+            "Depth Anything V2 Small": "depth-anything/Depth-Anything-V2-Small-hf",
+        }
+
+        model_id = depth_model_map.get(model_size_str, "depth-anything/Depth-Anything-V2-Large-hf")
+
+        print(f"Loading Depth Anything V2: {model_id}")
 
         self._depth_processor = AutoImageProcessor.from_pretrained(model_id)
         self._depth_model_raw = AutoModelForDepthEstimation.from_pretrained(model_id).to(self._device)

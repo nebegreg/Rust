@@ -1,9 +1,21 @@
 """
-SAM3 (Segment Anything Model 3) Integration
-============================================
+SAM2.1 (Segment Anything Model 2.1) Integration
+================================================
 
-Provides comprehensive integration with Meta's Segment Anything Model 3
+Provides comprehensive integration with Meta's Segment Anything Model 2.1
 for precise object segmentation in rotoscopy workflows.
+
+SAM2.1 was released on 09/30/2024 with significant improvements:
+- 6x faster than SAM1 for image segmentation
+- 3x fewer interactions needed for video segmentation
+- Better accuracy on fine details and edges
+- Native video segmentation support
+
+Model IDs (HuggingFace):
+- facebook/sam2.1-hiera-large (recommended)
+- facebook/sam2.1-hiera-base-plus
+- facebook/sam2.1-hiera-small
+- facebook/sam2.1-hiera-tiny
 
 Features:
 - Interactive point/box prompting
@@ -35,12 +47,12 @@ from ultimate_rotoscopy.models.base import (
 
 
 class SAM3ModelSize(Enum):
-    """Available SAM3 model sizes."""
-    TINY = "sam3_tiny"        # Fastest, lower quality
-    SMALL = "sam3_small"      # Good balance
-    BASE = "sam3_base"        # Default
-    LARGE = "sam3_large"      # High quality
-    HUGE = "sam3_huge"        # Highest quality, slowest
+    """Available SAM2.1 model sizes."""
+    TINY = "sam2.1_tiny"        # Fastest, lower quality
+    SMALL = "sam2.1_small"      # Good balance
+    BASE = "sam2.1_base_plus"   # Base+ model
+    LARGE = "sam2.1_large"      # High quality (recommended)
+    HUGE = "sam2.1_large"       # Alias for large (no huge variant in SAM2)
 
 
 class PromptType(Enum):
@@ -135,50 +147,90 @@ class SAM3Segmentor(BaseModel):
         self._temporal_buffer: List[np.ndarray] = []
 
     def load(self) -> None:
-        """Load SAM3 model from HuggingFace or local path."""
+        """Load SAM2.1 model from HuggingFace or local path."""
         if self._is_loaded:
             return
 
-        print(f"Loading SAM3 {self.sam3_config.model_size.value}...")
+        print(f"Loading SAM2.1 {self.sam3_config.model_size.value}...")
         start_time = time.time()
 
+        model_id = self._get_model_id()
+
         try:
-            # Try to load from transformers
-            from transformers import SamModel, SamProcessor
+            # Try SAM2 first (requires transformers >= 4.45)
+            from transformers import Sam2Model, Sam2Processor
 
-            model_id = self._get_model_id()
-
-            self.processor = SamProcessor.from_pretrained(
+            self.processor = Sam2Processor.from_pretrained(
                 model_id,
                 cache_dir=self.config.cache_dir,
             )
 
-            self.model = SamModel.from_pretrained(
+            self.model = Sam2Model.from_pretrained(
                 model_id,
                 torch_dtype=self.dtype,
                 cache_dir=self.config.cache_dir,
             ).to(self.device)
 
-            # Extract components
-            self.image_encoder = self.model.vision_encoder
-            self.prompt_encoder = self.model.prompt_encoder
-            self.mask_decoder = self.model.mask_decoder
+            self._sam_version = 2
+            print(f"Loaded SAM2.1 from {model_id}")
 
         except ImportError:
-            # Fallback to segment-anything package
-            self._load_from_segment_anything()
+            print("SAM2 not available, falling back to SAM1")
+            # Fallback to SAM1 if SAM2 not available
+            try:
+                from transformers import SamModel, SamProcessor
+
+                # Use SAM1 model IDs
+                sam1_model_id = self._get_sam1_fallback_id()
+
+                self.processor = SamProcessor.from_pretrained(
+                    sam1_model_id,
+                    cache_dir=self.config.cache_dir,
+                )
+
+                self.model = SamModel.from_pretrained(
+                    sam1_model_id,
+                    torch_dtype=self.dtype,
+                    cache_dir=self.config.cache_dir,
+                ).to(self.device)
+
+                self._sam_version = 1
+                print(f"Loaded SAM1 from {sam1_model_id}")
+
+            except ImportError:
+                # Final fallback to segment-anything package
+                self._load_from_segment_anything()
+
+        # Extract components if available
+        if hasattr(self.model, 'vision_encoder'):
+            self.image_encoder = self.model.vision_encoder
+        if hasattr(self.model, 'prompt_encoder'):
+            self.prompt_encoder = self.model.prompt_encoder
+        if hasattr(self.model, 'mask_decoder'):
+            self.mask_decoder = self.model.mask_decoder
 
         self.optimize_for_inference()
         self._is_loaded = True
 
         load_time = time.time() - start_time
-        print(f"SAM3 loaded in {load_time:.2f}s on {self.device}")
+        print(f"SAM loaded in {load_time:.2f}s on {self.device}")
 
     def _get_model_id(self) -> str:
-        """Get HuggingFace model ID based on size."""
+        """Get HuggingFace SAM2.1 model ID based on size."""
         model_map = {
-            SAM3ModelSize.TINY: "facebook/sam-vit-tiny",
-            SAM3ModelSize.SMALL: "facebook/sam-vit-small",
+            SAM3ModelSize.TINY: "facebook/sam2.1-hiera-tiny",
+            SAM3ModelSize.SMALL: "facebook/sam2.1-hiera-small",
+            SAM3ModelSize.BASE: "facebook/sam2.1-hiera-base-plus",
+            SAM3ModelSize.LARGE: "facebook/sam2.1-hiera-large",
+            SAM3ModelSize.HUGE: "facebook/sam2.1-hiera-large",
+        }
+        return model_map.get(self.sam3_config.model_size, "facebook/sam2.1-hiera-large")
+
+    def _get_sam1_fallback_id(self) -> str:
+        """Get SAM1 fallback model ID."""
+        model_map = {
+            SAM3ModelSize.TINY: "facebook/sam-vit-base",  # No tiny in SAM1
+            SAM3ModelSize.SMALL: "facebook/sam-vit-base",
             SAM3ModelSize.BASE: "facebook/sam-vit-base",
             SAM3ModelSize.LARGE: "facebook/sam-vit-large",
             SAM3ModelSize.HUGE: "facebook/sam-vit-huge",
