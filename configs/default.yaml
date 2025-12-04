@@ -1,0 +1,94 @@
+# Ultimate Rotoscopy - Default Configuration
+# ============================================
+
+# Engine Settings
+engine:
+  processing_mode: balanced  # fast, balanced, quality, maximum
+  device: cuda               # cuda, cpu, mps
+  parallel_processing: true
+  max_workers: 4
+
+# SAM3 Settings
+sam3:
+  enabled: true
+  model_size: large         # tiny, small, base, large, huge
+  edge_refinement: true
+  temporal_consistency: true
+  hq_token: true
+  points_per_side: 32
+  pred_iou_thresh: 0.88
+  stability_score_thresh: 0.95
+
+# Depth Anything V3 Settings
+depth:
+  enabled: true
+  model_size: large         # small, base, large, giant
+  generate_normals: true
+  temporal_smoothing: true
+  edge_aware_smoothing: true
+  max_depth: 100.0
+  min_depth: 0.01
+
+# Matte Anything Settings
+matte:
+  enabled: true
+  model_type: matte_anything  # matte_anything, robust_video_matting, vit_matte
+  quality: high               # draft, standard, high, ultra
+  edge_mode: hair             # none, soft, sharp, hair, motion
+  temporal_consistency: true
+  temporal_alpha: 0.9
+  refine_foreground: true
+  spill_suppression: true
+  color_decontamination: true
+  handle_motion_blur: true
+
+# Output Settings
+output:
+  format: exr                 # exr, png, tiff
+  prefix: frame
+  padding: 6
+  compression: zip            # none, rle, zip, piz, dwaa
+  pixel_type: half            # half, float
+
+# AOV Settings
+aovs:
+  enabled: true
+  alpha: true
+  depth: true
+  depth_normalized: true
+  normals: true
+  foreground: true
+  edge_mask: true
+  hair_mask: true
+  motion_mask: true
+  segmentation: true
+  disparity: true
+
+# Video Settings
+video:
+  frame_rate: 24.0
+  temporal_window: 5
+  keyframe_interval: 24
+  motion_threshold: 0.1
+  prefetch_frames: 4
+
+# Flame Export Settings
+flame:
+  enabled: true
+  color_space: ACES
+  clip_name: rotoscopy_output
+  generate_batch_setup: true
+  generate_action_setup: false
+
+# Cache Settings
+cache:
+  directory: ~/.cache/rotoscopy
+  max_size_gb: 20
+  cache_embeddings: true
+  cache_intermediate: true
+
+# Logging
+logging:
+  level: info                 # debug, info, warning, error
+  file: null                  # Optional log file path
+  console: true
