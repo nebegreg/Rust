@@ -213,6 +213,7 @@ class DepthAnythingV3(BaseModel):
         self.sky_segmentor = None
         self.pose_estimator = None
         self.gaussian_renderer = None
+        self.processor = None  # HuggingFace processor for DA2/DA3
         self._temporal_buffer: List[np.ndarray] = []
         self._camera_intrinsics: Optional[CameraIntrinsics] = None
         self._da_version = 3

@@ -202,9 +202,11 @@ class SAM3Segmentor(BaseModel):
         self.predictor = None
         self.mask_generator = None
         self.text_encoder = None
+        self.text_tokenizer = None  # Added for text prompts
         self.image_encoder = None
         self.prompt_encoder = None
         self.mask_decoder = None
+        self.processor = None  # HuggingFace processor (SAM2/SAM1 fallback)
         self._image_embedding = None
         self._original_size = None
         self._input_size = None
