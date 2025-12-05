@@ -362,6 +362,15 @@ class ViTMatte:
         self._model = None
         self._loaded = False
 
+    def load(self):
+        """
+        Explicitly load the ViTMatte model.
+
+        This is called automatically on first use, but can be called
+        explicitly to pre-load the model.
+        """
+        self._load_model()
+
     def _load_model(self):
         """Load ViTMatte model."""
         if self._loaded:

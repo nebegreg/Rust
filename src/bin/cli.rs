@@ -73,7 +73,7 @@ fn main() {
 
         Commands::Batch {
             input,
-            output,
+            output: _,
             pattern,
             workers,
         } => {

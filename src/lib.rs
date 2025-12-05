@@ -11,14 +11,8 @@
 
 use pyo3::prelude::*;
 use numpy::{PyArray2, PyArray3, PyReadonlyArray2, PyReadonlyArray3, IntoPyArray};
-use ndarray::{Array2, Array3, Axis, s};
+use ndarray::{Array2, Array3, Axis};
 use rayon::prelude::*;
-
-pub mod edge;
-pub mod alpha;
-pub mod depth;
-pub mod pointcloud;
-pub mod exr;
 
 /// Edge detection and refinement module
 pub mod edge {
@@ -84,7 +78,7 @@ pub mod edge {
         high_threshold: f32,
     ) -> &'py PyArray2<f32> {
         let img = image.as_array();
-        let (h, w) = (img.shape()[0], img.shape()[1]);
+        let (_h, _w) = (img.shape()[0], img.shape()[1]);
 
         // Step 1: Gaussian blur
         let blurred = gaussian_blur(&img);

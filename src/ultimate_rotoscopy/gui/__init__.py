@@ -14,6 +14,9 @@ Provides:
 
 from ultimate_rotoscopy.gui.main_window import MainWindow, main
 
+# Alias for entry point
+launch = main
+
 try:
     from ultimate_rotoscopy.gui.backend import (
         ProcessingBackend,
@@ -34,6 +37,7 @@ except ImportError:
 __all__ = [
     "MainWindow",
     "main",
+    "launch",
     "ProcessingBackend",
     "ProcessingWorker",
     "ProcessingStage",
