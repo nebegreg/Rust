@@ -436,10 +436,10 @@ class ProcessingWorker(QObject):
     def _load_vitmatte(self, params: Dict[str, Any]):
         """Load ViTMatte model."""
         try:
-            from ultimate_rotoscopy.models.vitmatte import ViTMatteModel, ViTMatteConfig
+            from ultimate_rotoscopy.models.vitmatte import ViTMatte, ViTMatteConfig
 
             config = ViTMatteConfig(device=self._device)
-            self._vitmatte = ViTMatteModel(config)
+            self._vitmatte = ViTMatte(config)
             self._vitmatte.load()
 
         except Exception as e:

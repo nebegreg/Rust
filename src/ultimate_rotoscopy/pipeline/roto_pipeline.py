@@ -302,8 +302,9 @@ class UltimateRotoPipeline:
     def _load_matting_model(self) -> None:
         """Load matting refinement model (ViTMatte or similar)."""
         try:
-            from ultimate_rotoscopy.models.vitmatte import ViTMatteModel
-            self.matting_model = ViTMatteModel()
+            from ultimate_rotoscopy.models.vitmatte import ViTMatte, ViTMatteConfig
+            config = ViTMatteConfig()
+            self.matting_model = ViTMatte(config)
             self.matting_model.load()
         except ImportError:
             # Fallback to guided filter refinement
