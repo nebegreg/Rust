@@ -933,23 +933,31 @@ class ModernMainWindow(QMainWindow):
         self.seg_tab = SegmentationTab(self.canvas)
         self.tabs.addTab(self.seg_tab, "✂️ Segmentation")
 
-        # Tab 3-5: Import from modern_gui_tabs
+        # Tab 3-6: Import from modern_gui_tabs
         try:
             from ultimate_rotoscopy.gui.modern_gui_tabs import (
-                MattingTab, CompositeTab, ExportTab
+                DepthTab, MattingTab, CompositeTab, ExportTab
             )
 
+            # Tab 3: Depth Anything V3
+            self.depth_tab = DepthTab(self.canvas)
+            self.tabs.addTab(self.depth_tab, "🌊 Depth")
+
+            # Tab 4: Matting
             self.matting_tab = MattingTab(self.canvas)
             self.tabs.addTab(self.matting_tab, "🎨 Matting")
 
+            # Tab 5: Composite
             self.composite_tab = CompositeTab(self.canvas)
             self.tabs.addTab(self.composite_tab, "🖼️ Composite")
 
+            # Tab 6: Export
             self.export_tab = ExportTab()
             self.tabs.addTab(self.export_tab, "💾 Export")
 
         except ImportError as e:
             print(f"Warning: Could not load additional tabs: {e}")
+            self.depth_tab = None
             self.matting_tab = None
             self.composite_tab = None
             self.export_tab = None
@@ -1108,6 +1116,23 @@ class ModernMainWindow(QMainWindow):
             if self.matting_tab:
                 self.matting_tab.set_backend(self.backend)
 
+            # Initialize and set Depth Anything V3
+            if self.depth_tab:
+                try:
+                    from ultimate_rotoscopy.models.depth_anything import DepthAnythingV3, DepthConfig, DepthModelSize
+                    depth_config = DepthConfig(
+                        model_size=DepthModelSize.LARGE,
+                        generate_normals=True,
+                        estimate_intrinsics=True,
+                        sky_segmentation=True,
+                    )
+                    depth_model = DepthAnythingV3(depth_config)
+                    # Note: Model will be loaded on first use (lazy loading)
+                    self.depth_tab.set_depth_model(depth_model)
+                    print("Depth Anything V3 model configured (lazy loading)")
+                except ImportError as e:
+                    print(f"Warning: Could not load Depth Anything V3: {e}")
+
             self.progress_bar.setVisible(False)
             self.status_label.setText("✓ Ready - Models loaded")
 
@@ -1129,6 +1154,10 @@ class ModernMainWindow(QMainWindow):
         # Mask generated -> enable matting
         self.seg_tab.mask_generated.connect(self._on_mask_generated)
 
+        # Depth generated -> can be used for compositing
+        if self.depth_tab:
+            self.depth_tab.depth_generated.connect(self._on_depth_generated)
+
         # Matting result -> enable composite
         if self.matting_tab:
             self.matting_tab.matte_generated.connect(self._on_matting_complete)
@@ -1146,6 +1175,8 @@ class ModernMainWindow(QMainWindow):
         if frames:
             self.canvas.set_image(frames[0])
             self.seg_tab.set_image(frames[0])
+            if self.depth_tab:
+                self.depth_tab.set_image(frames[0])
 
         self.status_label.setText(f"✓ Loaded {len(frames)} frames - {metadata.get('resolution', '?')}")
 
@@ -1158,6 +1189,8 @@ class ModernMainWindow(QMainWindow):
             frame = self.frames[frame_idx]
             self.canvas.set_image(frame)
             self.seg_tab.set_image(frame)
+            if self.depth_tab:
+                self.depth_tab.set_image(frame)
 
     def _on_mask_generated(self, mask):
         """Handle mask generated."""
@@ -1190,6 +1223,17 @@ class ModernMainWindow(QMainWindow):
         # Enable export tab
         if self.export_tab:
             self.export_tab.set_layer_data("composite", composite)
+
+    def _on_depth_generated(self, depth_result):
+        """Handle depth estimation complete."""
+        self.status_label.setText("✓ Depth estimated - Available for compositing")
+
+        # Depth maps can be used for:
+        # - 3D compositing with depth-aware effects
+        # - Relighting based on normals
+        # - Point cloud export for 3D reconstruction
+        # Store for later use if needed
+        pass
 
     def _reset_zoom(self):
         """Reset zoom to 100%."""
