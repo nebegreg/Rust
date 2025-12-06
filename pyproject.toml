@@ -49,7 +49,6 @@ dependencies = [
     "kornia>=0.7.0",
     "diffusers>=0.24.0",
     "openexr>=3.2.0",
-    "imath>=3.1.0",
     "imageio>=2.31.0",
     "imageio-ffmpeg>=0.4.8",
     "tqdm>=4.65.0",

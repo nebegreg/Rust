@@ -261,7 +261,6 @@ print_step "Installing professional format support..."
 
 pip install \
     "OpenEXR>=3.2.0" \
-    "Imath>=3.1.0" \
     "colour-science>=0.4.0"
 
 echo "  ✓ Professional formats installed"
