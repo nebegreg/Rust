@@ -14,8 +14,17 @@ Provides:
 
 from ultimate_rotoscopy.gui.main_window import MainWindow, main
 
-# Alias for entry point
-launch = main
+# Modern GUI (new tabbed interface)
+try:
+    from ultimate_rotoscopy.gui.modern_gui import ModernMainWindow, main as modern_main
+    MODERN_GUI_AVAILABLE = True
+except ImportError:
+    MODERN_GUI_AVAILABLE = False
+    ModernMainWindow = None
+    modern_main = None
+
+# Alias for entry point (use modern GUI by default)
+launch = modern_main if MODERN_GUI_AVAILABLE else main
 
 try:
     from ultimate_rotoscopy.gui.backend import (
@@ -37,6 +46,8 @@ except ImportError:
 __all__ = [
     "MainWindow",
     "main",
+    "ModernMainWindow",
+    "modern_main",
     "launch",
     "ProcessingBackend",
     "ProcessingWorker",
@@ -44,4 +55,5 @@ __all__ = [
     "ProcessingRequest",
     "ProcessingResult",
     "BACKEND_AVAILABLE",
+    "MODERN_GUI_AVAILABLE",
 ]
