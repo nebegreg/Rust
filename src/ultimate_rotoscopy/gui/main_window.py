@@ -390,12 +390,12 @@ class ParameterPanel(QWidget):
 
     def _create_segmentation_group(self):
         """Create segmentation parameters."""
-        group, layout = self._create_group("Segmentation (SAM2)")
+        group, layout = self._create_group("Segmentation (SAM3)")
 
         # Model selection
         layout.addWidget(QLabel("Model:"))
         self.sam_model = QComboBox()
-        self.sam_model.addItems(["SAM2.1 Large", "SAM2.1 Base+", "SAM2.1 Small"])
+        self.sam_model.addItems(["SAM3 Large", "SAM3 Base", "SAM3 Small", "SAM3 Tiny"])
         layout.addWidget(self.sam_model)
 
         # Use RobustSAM
@@ -449,12 +449,12 @@ class ParameterPanel(QWidget):
 
     def _create_depth_group(self):
         """Create depth estimation parameters."""
-        group, layout = self._create_group("Depth Estimation")
+        group, layout = self._create_group("Depth Estimation (Depth Anything V3)")
 
         # Model selection
         layout.addWidget(QLabel("Model:"))
         self.depth_model = QComboBox()
-        self.depth_model.addItems(["Depth Anything V2 Large", "Depth Anything V2 Base", "Depth Anything V2 Small"])
+        self.depth_model.addItems(["Depth Anything V3 Large", "Depth Anything V3 Base", "Depth Anything V3 Small", "Depth Anything V3 Giant"])
         layout.addWidget(self.depth_model)
 
         # Output type
