@@ -996,6 +996,34 @@ class ProcessingBackend(QObject):
             Q_ARG(object, request),
         )
 
+    def process_sync(self, request: ProcessingRequest) -> ProcessingResult:
+        """
+        Process request synchronously (blocking).
+
+        WARNING: This blocks the main thread. Use for simple operations only.
+        For long-running tasks, use async methods (run_segmentation, etc).
+        """
+        # Call worker's process method directly (not in thread)
+        # This is synchronous and will block
+        result_holder = {'result': None}
+
+        def on_finished(result):
+            result_holder['result'] = result
+
+        # Temporarily connect to capture result
+        self._worker.finished.connect(on_finished)
+
+        try:
+            # Process directly (blocks)
+            self._worker.process(request)
+            return result_holder['result']
+        finally:
+            # Disconnect temporary connection
+            try:
+                self._worker.finished.disconnect(on_finished)
+            except:
+                pass
+
     def get_cached_result(self, stage: ProcessingStage) -> Optional[ProcessingResult]:
         """Get cached result for a stage."""
         return self._results_cache.get(stage)
