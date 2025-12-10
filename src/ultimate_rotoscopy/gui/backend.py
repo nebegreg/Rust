@@ -1003,24 +1003,45 @@ class ProcessingBackend(QObject):
         WARNING: This blocks the main thread. Use for simple operations only.
         For long-running tasks, use async methods (run_segmentation, etc).
         """
-        # Call worker's process method directly (not in thread)
-        # This is synchronous and will block
+        from PySide6.QtCore import QEventLoop
+
+        # Create event loop to wait for result
+        loop = QEventLoop()
         result_holder = {'result': None}
 
         def on_finished(result):
             result_holder['result'] = result
+            loop.quit()
 
-        # Temporarily connect to capture result
+        def on_error(error):
+            # Create error result
+            result_holder['result'] = ProcessingResult(
+                stage=request.stage,
+                success=False,
+                error=error
+            )
+            loop.quit()
+
+        # Connect signals
         self._worker.finished.connect(on_finished)
+        self._worker.error.connect(on_error)
 
         try:
-            # Process directly (blocks)
-            self._worker.process(request)
+            # Submit request (will be processed in worker thread)
+            self._process(request)
+
+            # Wait for completion (blocks here)
+            loop.exec()
+
             return result_holder['result']
         finally:
-            # Disconnect temporary connection
+            # Disconnect signals
             try:
                 self._worker.finished.disconnect(on_finished)
+            except:
+                pass
+            try:
+                self._worker.error.disconnect(on_error)
             except:
                 pass
 
