@@ -1232,3 +1232,12 @@ class SAM3Segmentor(BaseModel):
         self._original_size = None
         if self.predictor is not None:
             self.predictor.reset_image()
+
+
+# =============================================================================
+# Backward Compatibility Alias
+# =============================================================================
+
+# Alias SAM3 → SAM3Segmentor for backward compatibility
+# Many imports use "SAM3" but the actual class is "SAM3Segmentor"
+SAM3 = SAM3Segmentor

@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use numpy::{PyArray2, PyArray3, PyReadonlyArray2, PyReadonlyArray3, IntoPyArray};
 use ndarray::{Array2, Array3, Axis};
 use rayon::prelude::*;
+use nalgebra::{Matrix3, SymmetricEigen};
 
 /// Edge detection and refinement module
 pub mod edge {
@@ -97,6 +98,12 @@ pub mod edge {
 
     fn gaussian_blur(img: &ndarray::ArrayView2<f32>) -> Array2<f32> {
         let (h, w) = (img.shape()[0], img.shape()[1]);
+
+        // Guard: if image too small for 5x5 kernel, return copy unchanged
+        if h < 5 || w < 5 {
+            return img.to_owned();
+        }
+
         let mut result = Array2::<f32>::zeros((h, w));
 
         let kernel: [[f32; 5]; 5] = [
@@ -231,6 +238,9 @@ pub mod edge {
         let mask_arr = mask.as_array();
         let guide_arr = guide.as_array();
         let (h, w) = (mask_arr.shape()[0], mask_arr.shape()[1]);
+
+        // Clamp epsilon to prevent division by zero
+        let epsilon = epsilon.max(1e-6);
 
         // Simplified guided filter implementation
         let mut result = Array2::<f32>::zeros((h, w));
@@ -375,6 +385,11 @@ pub mod alpha {
         alpha: PyReadonlyArray2<f32>,
         radius: f32,
     ) -> &'py PyArray2<f32> {
+        // Guard against division by zero: if radius <= 0, return input unchanged
+        if radius <= 0.0 {
+            return alpha.as_array().to_owned().into_pyarray(py);
+        }
+
         let img = alpha.as_array();
         let (h, w) = (img.shape()[0], img.shape()[1]);
 
@@ -545,6 +560,10 @@ pub mod depth {
 
         let mut result = Array2::<f32>::zeros((h, w));
 
+        // Clamp sigma values to prevent division by zero
+        let spatial_sigma = spatial_sigma.max(1e-6);
+        let range_sigma = range_sigma.max(1e-6);
+
         let spatial_coeff = -1.0 / (2.0 * spatial_sigma * spatial_sigma);
         let range_coeff = -1.0 / (2.0 * range_sigma * range_sigma);
 
@@ -713,23 +732,33 @@ pub mod pointcloud {
                 cov[2][0] = cov[0][2];
                 cov[2][1] = cov[1][2];
 
-                // Simple power iteration for smallest eigenvector
-                let mut v = [1.0f32, 0.0, 0.0];
-                for _ in 0..10 {
-                    let mut new_v = [
-                        cov[0][0] * v[0] + cov[0][1] * v[1] + cov[0][2] * v[2],
-                        cov[1][0] * v[0] + cov[1][1] * v[1] + cov[1][2] * v[2],
-                        cov[2][0] * v[0] + cov[2][1] * v[1] + cov[2][2] * v[2],
-                    ];
+                // Compute smallest eigenvector using symmetric eigendecomposition
+                // FIXED: Previous power iteration converged to LARGEST eigenvector
+                // Normal direction = eigenvector of SMALLEST eigenvalue
+                let cov_matrix = Matrix3::new(
+                    cov[0][0], cov[0][1], cov[0][2],
+                    cov[1][0], cov[1][1], cov[1][2],
+                    cov[2][0], cov[2][1], cov[2][2],
+                );
 
-                    let len = (new_v[0] * new_v[0] + new_v[1] * new_v[1] + new_v[2] * new_v[2]).sqrt();
-                    if len > 1e-6 {
-                        new_v[0] /= len;
-                        new_v[1] /= len;
-                        new_v[2] /= len;
+                let eigen = SymmetricEigen::new(cov_matrix);
+
+                // Find index of smallest eigenvalue
+                let mut min_idx = 0;
+                let mut min_val = eigen.eigenvalues[0];
+                for i in 1..3 {
+                    if eigen.eigenvalues[i] < min_val {
+                        min_val = eigen.eigenvalues[i];
+                        min_idx = i;
                     }
-                    v = new_v;
                 }
+
+                // Extract corresponding eigenvector
+                let mut v = [
+                    eigen.eigenvectors[(0, min_idx)],
+                    eigen.eigenvectors[(1, min_idx)],
+                    eigen.eigenvectors[(2, min_idx)],
+                ];
 
                 // Orient normal towards camera (positive Z)
                 if v[2] < 0.0 {
