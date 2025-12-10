@@ -1044,7 +1044,7 @@ class ModernMainWindow(QMainWindow):
         if self.matting_tab:
             refine_action = QAction("Refine Alpha", self)
             refine_action.setShortcut("Ctrl+R")
-            refine_action.triggered.connect(self.matting_tab._process_matting)
+            refine_action.triggered.connect(self.matting_tab._generate_matte)
             process_menu.addAction(refine_action)
 
         # Help menu
@@ -1082,7 +1082,7 @@ class ModernMainWindow(QMainWindow):
         if self.matting_tab:
             refine_btn = QAction("🎨 Refine", self)
             refine_btn.setToolTip("Refine alpha with professional matting")
-            refine_btn.triggered.connect(self.matting_tab._process_matting)
+            refine_btn.triggered.connect(self.matting_tab._generate_matte)
             toolbar.addAction(refine_btn)
 
         toolbar.addSeparator()
