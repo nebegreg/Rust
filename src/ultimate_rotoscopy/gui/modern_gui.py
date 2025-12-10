@@ -39,7 +39,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QAction, QIcon, QPixmap, QImage, QPainter, QPen, QBrush,
-    QColor, QKeySequence, QCursor, QFont, QTransform,
+    QColor, QKeySequence, QCursor, QFont, QTransform, QPalette,
 )
 
 # Processing backend
@@ -1273,19 +1273,19 @@ def main():
 
     # Dark theme
     palette = app.palette()
-    palette.setColor(palette.Window, QColor(53, 53, 53))
-    palette.setColor(palette.WindowText, Qt.white)
-    palette.setColor(palette.Base, QColor(35, 35, 35))
-    palette.setColor(palette.AlternateBase, QColor(53, 53, 53))
-    palette.setColor(palette.ToolTipBase, QColor(25, 25, 25))
-    palette.setColor(palette.ToolTipText, Qt.white)
-    palette.setColor(palette.Text, Qt.white)
-    palette.setColor(palette.Button, QColor(53, 53, 53))
-    palette.setColor(palette.ButtonText, Qt.white)
-    palette.setColor(palette.BrightText, Qt.red)
-    palette.setColor(palette.Link, QColor(42, 130, 218))
-    palette.setColor(palette.Highlight, QColor(42, 130, 218))
-    palette.setColor(palette.HighlightedText, QColor(35, 35, 35))
+    palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
+    palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
+    palette.setColor(QPalette.ColorRole.Base, QColor(35, 35, 35))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(25, 25, 25))
+    palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
+    palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
+    palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
+    palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
+    palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
+    palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(35, 35, 35))
     app.setPalette(palette)
 
     # Create main window
