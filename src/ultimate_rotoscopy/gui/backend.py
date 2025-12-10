@@ -676,6 +676,9 @@ class ProcessingBackend(QObject):
     model_loaded = Signal(str)
     gpu_memory_updated = Signal(float, float)  # used, total
 
+    # Internal signal to communicate with worker thread
+    process_requested = Signal(object)  # ProcessingRequest
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -690,6 +693,9 @@ class ProcessingBackend(QObject):
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self.processing_error.emit)
         self._worker.model_loaded.connect(self.model_loaded.emit)
+
+        # Connect internal signal to worker process slot
+        self.process_requested.connect(self._worker.process)
 
         # Start thread
         self._thread.start()
@@ -805,14 +811,8 @@ class ProcessingBackend(QObject):
         """Submit request for processing."""
         self._current_request = request
 
-        # Use QMetaObject to invoke in worker thread
-        from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-        QMetaObject.invokeMethod(
-            self._worker,
-            "process",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(object, request),
-        )
+        # Emit signal to worker thread (signal is already connected in __init__)
+        self.process_requested.emit(request)
 
     def process_sync(self, request: ProcessingRequest) -> ProcessingResult:
         """
