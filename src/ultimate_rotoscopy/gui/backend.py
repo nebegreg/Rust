@@ -167,16 +167,17 @@ class ProcessingWorker(QObject):
         )
 
     def _load_sam(self, params: Dict[str, Any]):
-        """Load SAM model."""
+        """Load SAM3 model (Segment Anything Model 3)."""
         try:
             from ultimate_rotoscopy.models.sam3 import SAM3Segmentor, SAM3Config, SAM3ModelSize
 
-            model_size_str = params.get("sam_model", "SAM2.1 Large")
+            model_size_str = params.get("sam_model", "SAM3 Large")
 
             size_map = {
-                "SAM2.1 Large": SAM3ModelSize.LARGE,
-                "SAM2.1 Base+": SAM3ModelSize.BASE,
-                "SAM2.1 Small": SAM3ModelSize.SMALL,
+                "SAM3 Large": SAM3ModelSize.LARGE,
+                "SAM3 Base": SAM3ModelSize.BASE,
+                "SAM3 Small": SAM3ModelSize.SMALL,
+                "SAM3 Tiny": SAM3ModelSize.TINY,
             }
 
             model_size = size_map.get(model_size_str, SAM3ModelSize.LARGE)
@@ -189,135 +190,30 @@ class ProcessingWorker(QObject):
             self._sam = SAM3Segmentor(config)
             self._sam.load()
 
-        except ImportError:
-            # Fallback to HuggingFace transformers
-            self._load_sam_transformers(params)
+            print(f"✓ Loaded {model_size_str}")
 
-    def _load_sam_transformers(self, params: Dict[str, Any]):
-        """Load SAM2 via transformers (latest version)."""
-        import torch
-
-        model_size_str = params.get("sam_model", "SAM2.1 Large")
-
-        # SAM2.1 model IDs (released 09/30/2024)
-        sam2_model_map = {
-            "SAM2.1 Large": "facebook/sam2.1-hiera-large",
-            "SAM2.1 Base+": "facebook/sam2.1-hiera-base-plus",
-            "SAM2.1 Small": "facebook/sam2.1-hiera-small",
-            "SAM2.1 Tiny": "facebook/sam2.1-hiera-tiny",
-        }
-
-        model_id = sam2_model_map.get(model_size_str, "facebook/sam2.1-hiera-large")
-
-        try:
-            # Try SAM2 first (transformers >= 4.45)
-            from transformers import Sam2Model, Sam2Processor
-
-            self._sam_processor = Sam2Processor.from_pretrained(model_id)
-            self._sam_model = Sam2Model.from_pretrained(model_id).to(self._device)
-            self._sam_model.eval()
-            self._sam_version = 2
-
-            print(f"Loaded SAM2.1: {model_id}")
-
-        except ImportError:
-            # Fallback to SAM1 if SAM2 not available
-            print("SAM2 not available in transformers, falling back to SAM1")
-            from transformers import SamModel, SamProcessor
-
-            model_id = "facebook/sam-vit-large"
-            self._sam_processor = SamProcessor.from_pretrained(model_id)
-            self._sam_model = SamModel.from_pretrained(model_id).to(self._device)
-            self._sam_model.eval()
-            self._sam_version = 1
-
-        # Create a wrapper
-        class SAMWrapper:
-            def __init__(self, model, processor, device, version=2):
-                self.model = model
-                self.processor = processor
-                self.device = device
-                self.version = version
-                self._image_embedding = None
-
-            def load(self):
-                pass
-
-            def set_image(self, image):
-                from PIL import Image as PILImage
-                if isinstance(image, np.ndarray):
-                    pil_image = PILImage.fromarray(image.astype(np.uint8) if image.dtype != np.uint8 else image)
-                else:
-                    pil_image = image
-                self._pil_image = pil_image
-
-            def segment(self, image, prompt, refine_edges=True):
-                import torch
-                from PIL import Image as PILImage
-
-                if isinstance(image, np.ndarray):
-                    if image.dtype == np.float32 or image.dtype == np.float64:
-                        image = (image * 255).astype(np.uint8)
-                    pil_image = PILImage.fromarray(image)
-                else:
-                    pil_image = image
-
-                # Prepare inputs
-                if prompt.points is not None:
-                    input_points = [prompt.points.tolist()]
-                    input_labels = [prompt.point_labels.tolist()] if prompt.point_labels is not None else None
-                    inputs = self.processor(
-                        pil_image,
-                        input_points=input_points,
-                        input_labels=input_labels,
-                        return_tensors="pt"
-                    ).to(self.device)
-                elif prompt.boxes is not None:
-                    input_boxes = [prompt.boxes.tolist()]
-                    inputs = self.processor(
-                        pil_image,
-                        input_boxes=input_boxes,
-                        return_tensors="pt"
-                    ).to(self.device)
-                else:
-                    inputs = self.processor(pil_image, return_tensors="pt").to(self.device)
-
-                with torch.no_grad():
-                    outputs = self.model(**inputs)
-
-                masks = self.processor.image_processor.post_process_masks(
-                    outputs.pred_masks.cpu(),
-                    inputs["original_sizes"].cpu(),
-                    inputs["reshaped_input_sizes"].cpu(),
-                )
-
-                masks = masks[0].numpy()
-                scores = outputs.iou_scores[0].cpu().numpy()
-
-                # Return result object
-                class Result:
-                    pass
-                result = Result()
-                result.masks = masks[0] if masks.ndim == 4 else masks
-                result.scores = scores
-                result.logits = outputs.pred_masks[0].cpu().numpy()
-                result.refined_mask = result.masks
-
-                return result
-
-        self._sam = SAMWrapper(self._sam_model, self._sam_processor, self._device, self._sam_version)
+        except ImportError as e:
+            error_msg = (
+                "SAM3 (Segment Anything Model 3) not installed!\n\n"
+                "This application requires SAM3. Install it with:\n"
+                "  pip install sam3\n\n"
+                "Requirements: Python 3.12+, PyTorch 2.7+, CUDA 12.6+\n"
+                f"Original error: {str(e)}"
+            )
+            raise ImportError(error_msg) from e
 
     def _load_depth(self, params: Dict[str, Any]):
-        """Load depth estimation model."""
+        """Load Depth Anything V3 model."""
         try:
             from ultimate_rotoscopy.models.depth_anything import DepthAnythingV3, DepthConfig, DepthModelSize
 
-            model_size_str = params.get("depth_model", "Depth Anything V2 Large")
+            model_size_str = params.get("depth_model", "Depth Anything V3 Large")
 
             size_map = {
-                "Depth Anything V2 Large": DepthModelSize.LARGE,
-                "Depth Anything V2 Base": DepthModelSize.BASE,
-                "Depth Anything V2 Small": DepthModelSize.SMALL,
+                "Depth Anything V3 Giant": DepthModelSize.GIANT,
+                "Depth Anything V3 Large": DepthModelSize.LARGE,
+                "Depth Anything V3 Base": DepthModelSize.BASE,
+                "Depth Anything V3 Small": DepthModelSize.SMALL,
             }
 
             model_size = size_map.get(model_size_str, DepthModelSize.LARGE)
@@ -330,95 +226,17 @@ class ProcessingWorker(QObject):
             self._depth_model = DepthAnythingV3(config)
             self._depth_model.load()
 
-        except ImportError:
-            self._load_depth_transformers(params)
+            print(f"✓ Loaded {model_size_str}")
 
-    def _load_depth_transformers(self, params: Dict[str, Any]):
-        """Load Depth Anything V2 via transformers (NeurIPS 2024)."""
-        from transformers import AutoImageProcessor, AutoModelForDepthEstimation
-        import torch
-
-        model_size_str = params.get("depth_model", "Depth Anything V2 Large")
-
-        # Depth Anything V2 model IDs (NeurIPS 2024)
-        depth_model_map = {
-            "Depth Anything V2 Large": "depth-anything/Depth-Anything-V2-Large-hf",
-            "Depth Anything V2 Base": "depth-anything/Depth-Anything-V2-Base-hf",
-            "Depth Anything V2 Small": "depth-anything/Depth-Anything-V2-Small-hf",
-        }
-
-        model_id = depth_model_map.get(model_size_str, "depth-anything/Depth-Anything-V2-Large-hf")
-
-        print(f"Loading Depth Anything V2: {model_id}")
-
-        self._depth_processor = AutoImageProcessor.from_pretrained(model_id)
-        self._depth_model_raw = AutoModelForDepthEstimation.from_pretrained(model_id).to(self._device)
-        self._depth_model_raw.eval()
-
-        class DepthWrapper:
-            def __init__(self, model, processor, device):
-                self.model = model
-                self.processor = processor
-                self.device = device
-
-            def load(self):
-                pass
-
-            def estimate_depth(self, image, generate_normals=True, generate_point_cloud=False):
-                import torch
-                from PIL import Image as PILImage
-                import cv2
-
-                if isinstance(image, np.ndarray):
-                    if image.dtype == np.float32 or image.dtype == np.float64:
-                        image = (image * 255).astype(np.uint8)
-                    pil_image = PILImage.fromarray(image)
-                else:
-                    pil_image = image
-
-                original_size = pil_image.size[::-1]  # (H, W)
-
-                inputs = self.processor(images=pil_image, return_tensors="pt").to(self.device)
-
-                with torch.no_grad():
-                    outputs = self.model(**inputs)
-                    predicted_depth = outputs.predicted_depth
-
-                depth = predicted_depth.squeeze().cpu().numpy()
-
-                # Resize to original
-                depth = cv2.resize(depth, (original_size[1], original_size[0]), interpolation=cv2.INTER_LINEAR)
-
-                # Normalize
-                depth_min, depth_max = depth.min(), depth.max()
-                depth_normalized = (depth - depth_min) / (depth_max - depth_min + 1e-8)
-
-                # Compute normals if requested
-                normals = None
-                if generate_normals:
-                    grad_x = cv2.Sobel(depth, cv2.CV_64F, 1, 0, ksize=3)
-                    grad_y = cv2.Sobel(depth, cv2.CV_64F, 0, 1, ksize=3)
-
-                    normals = np.zeros((*depth.shape, 3), dtype=np.float32)
-                    normals[..., 0] = -grad_x
-                    normals[..., 1] = -grad_y
-                    normals[..., 2] = 1.0
-
-                    norm = np.linalg.norm(normals, axis=-1, keepdims=True)
-                    normals = normals / (norm + 1e-8)
-
-                class Result:
-                    pass
-                result = Result()
-                result.depth_map = depth
-                result.depth_normalized = depth_normalized
-                result.normals = normals
-                result.confidence = np.ones_like(depth)
-                result.metadata = {}
-
-                return result
-
-        self._depth_model = DepthWrapper(self._depth_model_raw, self._depth_processor, self._device)
+        except ImportError as e:
+            error_msg = (
+                "Depth Anything V3 not installed!\n\n"
+                "This application requires Depth Anything V3. Install it with:\n"
+                "  pip install depth-anything-3\n\n"
+                "Requirements: Python 3.10+, PyTorch 2.0+, CUDA 11.8+\n"
+                f"Original error: {str(e)}"
+            )
+            raise ImportError(error_msg) from e
 
     def _load_matting(self, params: Dict[str, Any]):
         """Load matting model."""
