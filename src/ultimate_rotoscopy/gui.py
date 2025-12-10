@@ -71,9 +71,8 @@ def launch():
         if engine is None:
             return None, None, None, None, "Please initialize the engine first!"
 
+        # Store image but DON'T clear points yet - we need them for prompts!
         current_image = image
-        points.clear()
-        labels.clear()
 
         # Create prompt if points exist
         prompt = None

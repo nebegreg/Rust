@@ -98,7 +98,7 @@ def load_frames(input_path: str) -> Tuple[List[np.ndarray], List[str]]:
 
 
 @click.group()
-@click.version_option(version="3.0.0", prog_name="Ultimate Rotoscopy")
+@click.version_option(version="1.0.0", prog_name="Ultimate Rotoscopy")
 def cli():
     """
     Ultimate Rotoscopy - Cinema-Quality AI Rotoscopy Tool

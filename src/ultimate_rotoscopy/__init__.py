@@ -32,7 +32,7 @@ Designed for professional VFX artists working with tools like Autodesk Flame.
 Following ILM StageCraft-style workflows for cinema-quality compositing.
 """
 
-__version__ = "3.0.0"
+__version__ = "1.0.0"
 __author__ = "Ultimate Rotoscopy Team"
 
 # Core
