@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "maturin>=1.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "ultimate-rotoscopy"
@@ -118,3 +118,9 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "src"
+module-name = "ultimate_rotoscopy._rust"
+include = ["src/ultimate_rotoscopy/**/*.py"]
