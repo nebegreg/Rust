@@ -792,8 +792,9 @@ class SAM3MainWindow(QMainWindow):
 
     def _segment_with_text(self):
         """Segment with text prompt."""
-        if self.current_image_path is None:
-            self.status_bar.showMessage("Error: Load an image first")
+        # Check if we have an image or video loaded
+        if self.current_image_path is None and self.video_path is None:
+            self.status_bar.showMessage("Error: Load an image or video first")
             return
 
         text_prompt = self.text_input.text().strip()
@@ -801,14 +802,48 @@ class SAM3MainWindow(QMainWindow):
             self.status_bar.showMessage("Error: Enter a text prompt")
             return
 
+        # If video mode, save current frame to temp file
+        if self.video_path is not None:
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir())
+            temp_frame = temp_dir / f"sam3_current_frame_{self.current_frame_idx}.png"
+
+            # Get current frame from viewport
+            if self.video_cap is not None:
+                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+                ret, frame = self.video_cap.read()
+                if ret:
+                    cv2.imwrite(str(temp_frame), frame)
+                    self.current_image_path = temp_frame
+                else:
+                    self.status_bar.showMessage("Error: Cannot read current frame")
+                    return
+
         self.status_bar.showMessage(f"Segmenting: '{text_prompt}'...")
         self.worker.process_image_text(self.current_image_path, text_prompt)
 
     def _segment_with_visual(self):
         """Segment with visual prompts (points or box)."""
-        if self.current_image_path is None:
-            self.status_bar.showMessage("Error: Load an image first")
+        # Check if we have an image or video loaded
+        if self.current_image_path is None and self.video_path is None:
+            self.status_bar.showMessage("Error: Load an image or video first")
             return
+
+        # If video mode, save current frame to temp file
+        if self.video_path is not None and self.current_image_path is None:
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir())
+            temp_frame = temp_dir / f"sam3_current_frame_{self.current_frame_idx}.png"
+
+            if self.video_cap is not None:
+                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+                ret, frame = self.video_cap.read()
+                if ret:
+                    cv2.imwrite(str(temp_frame), frame)
+                    self.current_image_path = temp_frame
+                else:
+                    self.status_bar.showMessage("Error: Cannot read current frame")
+                    return
 
         if self.viewport.points:
             # Use points
