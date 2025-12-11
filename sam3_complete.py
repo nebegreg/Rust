@@ -49,8 +49,6 @@ except ImportError as e:
 class PromptType(Enum):
     """Types of prompts supported by SAM3."""
     TEXT = "text"
-    POINT = "point"
-    BOX = "box"
     MASK = "mask"
 
 
@@ -216,112 +214,6 @@ class SAM3ImageProcessor:
             scores=scores,
             prompt_type=PromptType.TEXT,
             prompt_data=text_prompt
-        )
-
-    def segment_with_points(
-        self,
-        image_path: Path,
-        points: List[Tuple[int, int]],
-        point_labels: Optional[List[int]] = None
-    ) -> SegmentationResult:
-        """
-        Segment image using point prompts.
-
-        Args:
-            image_path: Path to input image
-            points: List of (x, y) coordinates
-            point_labels: List of labels (1=foreground, 0=background).
-                         If None, all points are foreground.
-
-        Returns:
-            SegmentationResult
-        """
-        print(f"\n[POINT PROMPT] Processing: {image_path}")
-        print(f"  Points: {len(points)}")
-
-        # Load image
-        image = Image.open(str(image_path))
-        image_np = np.array(image)
-
-        # Prepare points
-        point_coords = np.array(points, dtype=np.float32)
-        if point_labels is None:
-            point_labels = np.ones(len(points), dtype=np.int32)
-        else:
-            point_labels = np.array(point_labels, dtype=np.int32)
-
-        for i, ((x, y), label) in enumerate(zip(points, point_labels)):
-            label_str = "FG" if label == 1 else "BG"
-            print(f"    Point {i+1}: ({x}, {y}) [{label_str}]")
-
-        # Set image
-        inference_state = self.processor.set_image(image)
-
-        # Set point prompt
-        output = self.processor.set_point_prompt(
-            state=inference_state,
-            point_coords=point_coords,
-            point_labels=point_labels
-        )
-
-        masks = output["masks"]
-        boxes = output["boxes"]
-        scores = output["scores"]
-
-        print(f"✓ Generated {len(masks)} mask(s)")
-        print(f"  Best score: {scores.max():.3f}")
-
-        return SegmentationResult(
-            masks=masks,
-            boxes=boxes,
-            scores=scores,
-            prompt_type=PromptType.POINT,
-            prompt_data={"points": points, "labels": point_labels.tolist()}
-        )
-
-    def segment_with_box(
-        self,
-        image_path: Path,
-        box: Tuple[int, int, int, int]  # (x1, y1, x2, y2)
-    ) -> SegmentationResult:
-        """
-        Segment image using bounding box prompt.
-
-        Args:
-            image_path: Path to input image
-            box: Bounding box as (x1, y1, x2, y2)
-
-        Returns:
-            SegmentationResult
-        """
-        print(f"\n[BOX PROMPT] Processing: {image_path}")
-        print(f"  Box: ({box[0]}, {box[1]}) -> ({box[2]}, {box[3]})")
-
-        # Load image
-        image = Image.open(str(image_path))
-
-        # Set image and box prompt
-        inference_state = self.processor.set_image(image)
-        box_array = np.array([box], dtype=np.float32)  # Shape: (1, 4)
-
-        output = self.processor.set_box_prompt(
-            state=inference_state,
-            boxes=box_array
-        )
-
-        masks = output["masks"]
-        boxes = output["boxes"]
-        scores = output["scores"]
-
-        print(f"✓ Generated {len(masks)} mask(s)")
-        print(f"  Best score: {scores.max():.3f}")
-
-        return SegmentationResult(
-            masks=masks,
-            boxes=boxes,
-            scores=scores,
-            prompt_type=PromptType.BOX,
-            prompt_data=box
         )
 
 
@@ -491,56 +383,6 @@ class SAM3VideoTracker:
 
         print(f"✓ Tracked {len(masks)} object(s)")
         print(f"  Best score: {scores.max():.3f}")
-
-        return result
-
-    def add_point_prompt(
-        self,
-        session: VideoTrackingSession,
-        frame_index: int,
-        points: List[Tuple[int, int]],
-        point_labels: Optional[List[int]] = None
-    ) -> SegmentationResult:
-        """
-        Add point prompt for tracking refinement.
-
-        Args:
-            session: Active tracking session
-            frame_index: Frame index
-            points: List of (x, y) coordinates
-            point_labels: Point labels (1=FG, 0=BG)
-
-        Returns:
-            SegmentationResult
-        """
-        print(f"\n[TRACKING] Adding point prompt to frame {frame_index}")
-
-        if point_labels is None:
-            point_labels = [1] * len(points)
-
-        # Add point prompt
-        response = self.video_predictor.handle_request(
-            request=dict(
-                type="add_prompt",
-                session_id=session.session_id,
-                frame_index=frame_index,
-                points=points,
-                point_labels=point_labels
-            )
-        )
-
-        output = response["outputs"]
-        result = SegmentationResult(
-            masks=output["masks"],
-            boxes=output["boxes"],
-            scores=output["scores"],
-            prompt_type=PromptType.POINT,
-            prompt_data={"points": points, "labels": point_labels}
-        )
-
-        session.add_frame_result(frame_index, result)
-
-        print(f"✓ Refined tracking with {len(points)} point(s)")
 
         return result
 
