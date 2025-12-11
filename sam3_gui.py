@@ -573,6 +573,12 @@ class SAM3MainWindow(QMainWindow):
         self.export_viz_btn.clicked.connect(self._export_visualization)
         export_layout.addWidget(self.export_viz_btn)
 
+        # Video export button
+        self.export_video_btn = QPushButton("Export Video Masks")
+        self.export_video_btn.setEnabled(False)
+        self.export_video_btn.clicked.connect(self._export_video_masks)
+        export_layout.addWidget(self.export_video_btn)
+
         layout.addWidget(export_group)
 
         layout.addStretch()
@@ -978,6 +984,78 @@ Bounding Boxes:
             cv2.imwrite(file_path, blended)
             self.status_bar.showMessage(f"Visualization saved: {Path(file_path).name}")
 
+    def _export_video_masks(self):
+        """Export all video masks to a directory."""
+        if not self.video_masks:
+            self.status_bar.showMessage("Error: No video masks to export")
+            return
+
+        # Ask user for output directory
+        from PySide6.QtWidgets import QFileDialog
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "Select Output Directory for Video Masks",
+            options=QFileDialog.Option.DontUseNativeDialog
+        )
+
+        if not output_dir:
+            return
+
+        output_path = Path(output_dir)
+        self.status_bar.showMessage(f"Exporting {len(self.video_masks)} masks...")
+
+        try:
+            # Create subdirectory for masks
+            masks_dir = output_path / f"{self.video_path.stem}_masks"
+            masks_dir.mkdir(exist_ok=True)
+
+            # Export each mask
+            exported_count = 0
+            for frame_idx in sorted(self.video_masks.keys()):
+                mask = self.video_masks[frame_idx]
+
+                # Ensure mask is 2D and valid
+                if mask.ndim > 2:
+                    mask = mask.squeeze()
+
+                # Convert to uint8
+                if mask.dtype != np.uint8:
+                    mask_uint8 = (mask * 255).astype(np.uint8)
+                else:
+                    mask_uint8 = mask
+
+                # Save mask
+                mask_filename = masks_dir / f"mask_{frame_idx:04d}.png"
+
+                try:
+                    cv2.imwrite(str(mask_filename), mask_uint8)
+                    exported_count += 1
+
+                    # Update status every 10 frames
+                    if exported_count % 10 == 0:
+                        self.status_bar.showMessage(f"Exported {exported_count}/{len(self.video_masks)} masks...")
+                except Exception as e:
+                    print(f"Error exporting frame {frame_idx}: {e}")
+                    continue
+
+            # Create a summary file
+            summary_file = masks_dir / "export_info.txt"
+            with open(summary_file, 'w') as f:
+                f.write(f"Video: {self.video_path.name}\n")
+                f.write(f"Total frames: {self.total_frames}\n")
+                f.write(f"Tracked frames: {len(self.video_masks)}\n")
+                f.write(f"Exported masks: {exported_count}\n")
+                f.write(f"Frame indices: {sorted(self.video_masks.keys())}\n")
+
+            self.status_bar.showMessage(
+                f"✓ Exported {exported_count} masks to {masks_dir.name}"
+            )
+
+        except Exception as e:
+            self.status_bar.showMessage(f"Error during export: {str(e)}")
+            print(f"Export error: {e}")
+            import traceback
+            traceback.print_exc()
+
     # Video timeline controls
     def _on_timeline_changed(self, frame_idx: int):
         """Handle timeline slider change."""
@@ -1081,8 +1159,11 @@ Bounding Boxes:
             # Update current frame to show mask
             self._load_frame(self.current_frame_idx)
 
+            # Enable video export button
+            self.export_video_btn.setEnabled(True)
+
             self.status_bar.showMessage(
-                f"✓ Tracking complete! Processed {len(self.video_masks)} frames"
+                f"✓ Tracking complete! Processed {len(self.video_masks)} frames - Ready to export"
             )
 
         except Exception as e:
