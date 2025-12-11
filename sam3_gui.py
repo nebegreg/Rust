@@ -686,7 +686,8 @@ class SAM3MainWindow(QMainWindow):
         """Load image file."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Image",
-            "", "Images (*.png *.jpg *.jpeg *.bmp)"
+            "", "Images (*.png *.jpg *.jpeg *.bmp)",
+            options=QFileDialog.Option.DontUseNativeDialog
         )
 
         if file_path:
@@ -700,7 +701,8 @@ class SAM3MainWindow(QMainWindow):
         """Load video file with full timeline support."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Video",
-            "", "Videos (*.mp4 *.avi *.mov *.mkv)"
+            "", "Videos (*.mp4 *.avi *.mov *.mkv)",
+            options=QFileDialog.Option.DontUseNativeDialog
         )
 
         if file_path:
@@ -890,7 +892,8 @@ Bounding Boxes:
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Mask",
-            "mask.png", "Images (*.png)"
+            "mask.png", "Images (*.png)",
+            options=QFileDialog.Option.DontUseNativeDialog
         )
 
         if file_path:
@@ -907,7 +910,8 @@ Bounding Boxes:
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Visualization",
-            "visualization.png", "Images (*.png)"
+            "visualization.png", "Images (*.png)",
+            options=QFileDialog.Option.DontUseNativeDialog
         )
 
         if file_path:
