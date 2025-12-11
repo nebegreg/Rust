@@ -111,6 +111,11 @@ class ImageViewport(QLabel):
         import torch
         if isinstance(mask, torch.Tensor):
             mask = mask.detach().cpu().numpy()
+
+        # Ensure mask is 2D by squeezing extra dimensions
+        while mask.ndim > 2:
+            mask = mask.squeeze(0)
+
         self.mask = mask.copy()
         self.overlay_alpha = alpha
         self._update_display()
