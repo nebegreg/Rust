@@ -21,7 +21,7 @@ import sys
 import numpy as np
 import cv2
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from dataclasses import dataclass
 
 try:
@@ -343,6 +343,17 @@ class SAM3MainWindow(QMainWindow):
         self.current_image_path: Optional[Path] = None
         self.current_result: Optional[SegmentationResult] = None
 
+        # Video data
+        self.video_path: Optional[Path] = None
+        self.video_cap: Optional[cv2.VideoCapture] = None
+        self.video_frames: List[np.ndarray] = []  # Cached frames
+        self.video_masks: Dict[int, np.ndarray] = {}  # Frame index -> mask
+        self.current_frame_idx = 0
+        self.total_frames = 0
+        self.fps = 0.0
+        self.is_playing = False
+        self.play_timer: Optional[QTimer] = None
+
         # Worker thread
         self.worker = SAM3Worker()
         self.worker.result_ready.connect(self._on_result_ready)
@@ -465,7 +476,68 @@ class SAM3MainWindow(QMainWindow):
         self.viewport.box_drawn.connect(self._on_box_drawn)
         layout.addWidget(self.viewport)
 
+        # Video timeline controls
+        timeline_widget = self._create_video_timeline()
+        layout.addWidget(timeline_widget)
+
         return panel
+
+    def _create_video_timeline(self) -> QWidget:
+        """Create video timeline with playback controls."""
+        widget = QWidget()
+        widget.setMaximumHeight(100)
+        layout = QVBoxLayout(widget)
+
+        # Timeline slider
+        slider_layout = QHBoxLayout()
+        slider_layout.addWidget(QLabel("Frame:"))
+
+        self.timeline_slider = QSlider(Qt.Orientation.Horizontal)
+        self.timeline_slider.setMinimum(0)
+        self.timeline_slider.setMaximum(0)
+        self.timeline_slider.setValue(0)
+        self.timeline_slider.setEnabled(False)
+        self.timeline_slider.valueChanged.connect(self._on_timeline_changed)
+        slider_layout.addWidget(self.timeline_slider)
+
+        self.frame_label = QLabel("0 / 0")
+        self.frame_label.setMinimumWidth(100)
+        slider_layout.addWidget(self.frame_label)
+
+        layout.addLayout(slider_layout)
+
+        # Playback controls
+        controls_layout = QHBoxLayout()
+
+        self.play_btn = QPushButton("▶ Play")
+        self.play_btn.setEnabled(False)
+        self.play_btn.clicked.connect(self._toggle_play)
+        controls_layout.addWidget(self.play_btn)
+
+        self.prev_frame_btn = QPushButton("◀ Prev")
+        self.prev_frame_btn.setEnabled(False)
+        self.prev_frame_btn.clicked.connect(self._prev_frame)
+        controls_layout.addWidget(self.prev_frame_btn)
+
+        self.next_frame_btn = QPushButton("Next ▶")
+        self.next_frame_btn.setEnabled(False)
+        self.next_frame_btn.clicked.connect(self._next_frame)
+        controls_layout.addWidget(self.next_frame_btn)
+
+        self.track_video_btn = QPushButton("🎬 Track Video")
+        self.track_video_btn.setEnabled(False)
+        self.track_video_btn.clicked.connect(self._track_video)
+        controls_layout.addWidget(self.track_video_btn)
+
+        controls_layout.addStretch()
+
+        layout.addLayout(controls_layout)
+
+        # Initially hide timeline
+        widget.setVisible(False)
+        self.timeline_widget = widget
+
+        return widget
 
     def _create_right_panel(self) -> QWidget:
         """Create right results panel."""
@@ -625,7 +697,7 @@ class SAM3MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Loaded: {self.current_image_path.name}")
 
     def _load_video(self):
-        """Load video file (loads first frame for now)."""
+        """Load video file with full timeline support."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Video",
             "", "Videos (*.mp4 *.avi *.mov *.mkv)"
@@ -636,47 +708,79 @@ class SAM3MainWindow(QMainWindow):
 
             try:
                 # Open video with OpenCV
-                cap = cv2.VideoCapture(str(file_path))
+                self.video_cap = cv2.VideoCapture(str(file_path))
 
-                if not cap.isOpened():
+                if not self.video_cap.isOpened():
                     self.status_bar.showMessage(f"Error: Cannot open video {Path(file_path).name}")
                     return
 
                 # Get video info
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                self.fps = self.video_cap.get(cv2.CAP_PROP_FPS)
+                self.total_frames = int(self.video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                width = int(self.video_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(self.video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-                # Read first frame
-                ret, frame = cap.read()
-                cap.release()
+                # Store video path
+                self.video_path = Path(file_path)
 
-                if not ret:
-                    self.status_bar.showMessage(f"Error: Cannot read first frame")
-                    return
+                # Reset video state
+                self.video_frames = []
+                self.video_masks = {}
+                self.current_frame_idx = 0
 
-                # Convert BGR to RGB
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # Load first frame
+                self._load_frame(0)
 
-                # Save first frame to temporary file for processing
-                import tempfile
-                temp_dir = Path(tempfile.gettempdir())
-                temp_frame = temp_dir / f"sam3_video_frame_{Path(file_path).stem}.png"
-                cv2.imwrite(str(temp_frame), frame)  # Save as BGR for OpenCV compatibility
+                # Setup timeline
+                self.timeline_slider.setMaximum(self.total_frames - 1)
+                self.timeline_slider.setValue(0)
+                self.timeline_slider.setEnabled(True)
+                self.frame_label.setText(f"0 / {self.total_frames}")
 
-                # Store temp frame path and load first frame
-                self.current_image_path = temp_frame
-                self.viewport.set_image(frame_rgb)
+                # Enable controls
+                self.play_btn.setEnabled(True)
+                self.prev_frame_btn.setEnabled(True)
+                self.next_frame_btn.setEnabled(True)
+                self.track_video_btn.setEnabled(True)
+
+                # Show timeline
+                self.timeline_widget.setVisible(True)
 
                 self.status_bar.showMessage(
                     f"Video loaded: {Path(file_path).name} - "
-                    f"{width}x{height}, {frame_count} frames @ {fps:.1f}fps "
-                    f"(showing first frame - use CLI for full video tracking)"
+                    f"{width}x{height}, {self.total_frames} frames @ {self.fps:.1f}fps"
                 )
 
             except Exception as e:
                 self.status_bar.showMessage(f"Error loading video: {str(e)}")
+
+    def _load_frame(self, frame_idx: int):
+        """Load and display a specific frame."""
+        if self.video_cap is None:
+            return
+
+        # Seek to frame
+        self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self.video_cap.read()
+
+        if not ret:
+            self.status_bar.showMessage(f"Error reading frame {frame_idx}")
+            return
+
+        # Convert BGR to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Display frame
+        self.viewport.set_image(frame_rgb)
+
+        # Display mask if available for this frame
+        if frame_idx in self.video_masks:
+            self.viewport.set_mask(self.video_masks[frame_idx])
+        else:
+            self.viewport.mask = None
+            self.viewport._update_display()
+
+        self.current_frame_idx = frame_idx
 
     def _segment_with_text(self):
         """Segment with text prompt."""
@@ -828,6 +932,123 @@ Bounding Boxes:
 
             cv2.imwrite(file_path, blended)
             self.status_bar.showMessage(f"Visualization saved: {Path(file_path).name}")
+
+    # Video timeline controls
+    def _on_timeline_changed(self, frame_idx: int):
+        """Handle timeline slider change."""
+        if self.video_cap is not None:
+            self._load_frame(frame_idx)
+            self.frame_label.setText(f"{frame_idx} / {self.total_frames}")
+
+    def _prev_frame(self):
+        """Go to previous frame."""
+        if self.current_frame_idx > 0:
+            new_idx = self.current_frame_idx - 1
+            self.timeline_slider.setValue(new_idx)
+
+    def _next_frame(self):
+        """Go to next frame."""
+        if self.current_frame_idx < self.total_frames - 1:
+            new_idx = self.current_frame_idx + 1
+            self.timeline_slider.setValue(new_idx)
+
+    def _toggle_play(self):
+        """Toggle video playback."""
+        if self.is_playing:
+            # Stop playing
+            self.is_playing = False
+            self.play_btn.setText("▶ Play")
+            if self.play_timer:
+                self.play_timer.stop()
+        else:
+            # Start playing
+            self.is_playing = True
+            self.play_btn.setText("⏸ Pause")
+
+            # Create timer for playback
+            if self.play_timer is None:
+                self.play_timer = QTimer()
+                self.play_timer.timeout.connect(self._play_next_frame)
+
+            # Calculate interval from FPS (convert to milliseconds)
+            interval = int(1000 / self.fps) if self.fps > 0 else 33  # Default 30fps
+            self.play_timer.start(interval)
+
+    def _play_next_frame(self):
+        """Advance to next frame during playback."""
+        if self.current_frame_idx < self.total_frames - 1:
+            self._next_frame()
+        else:
+            # End of video, stop playing
+            self._toggle_play()
+            self.timeline_slider.setValue(0)  # Reset to start
+
+    def _track_video(self):
+        """Track object through entire video using SAM3VideoTracker."""
+        if self.video_path is None:
+            self.status_bar.showMessage("Error: No video loaded")
+            return
+
+        text_prompt = self.text_input.text().strip()
+        if not text_prompt:
+            self.status_bar.showMessage("Error: Enter a text prompt for tracking")
+            return
+
+        # Disable controls during tracking
+        self.track_video_btn.setEnabled(False)
+        self.status_bar.showMessage(f"Tracking '{text_prompt}' through {self.total_frames} frames...")
+
+        try:
+            # Import SAM3VideoTracker
+            from sam3_complete import SAM3VideoTracker
+
+            # Initialize tracker
+            tracker = SAM3VideoTracker(device="cuda")
+
+            # Start session with video
+            session = tracker.start_session(self.video_path)
+
+            # Add text prompt to first frame
+            result = tracker.add_text_prompt(
+                session=session,
+                frame_index=0,
+                text_prompt=text_prompt
+            )
+
+            # Store mask for first frame
+            best_mask, score = result.get_best_mask()
+            self.video_masks[0] = best_mask
+
+            # Propagate tracking across all frames
+            self.status_bar.showMessage(f"Propagating tracking to all frames...")
+
+            results = tracker.propagate_tracking(
+                session=session,
+                start_frame=0,
+                end_frame=self.total_frames - 1
+            )
+
+            # Store all masks
+            for frame_idx, frame_result in session.frame_results.items():
+                mask, _ = frame_result.get_best_mask()
+                self.video_masks[frame_idx] = mask
+
+            # Update current frame to show mask
+            self._load_frame(self.current_frame_idx)
+
+            self.status_bar.showMessage(
+                f"✓ Tracking complete! Processed {len(self.video_masks)} frames"
+            )
+
+        except Exception as e:
+            self.status_bar.showMessage(f"Error during tracking: {str(e)}")
+            print(f"Tracking error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            # Re-enable controls
+            self.track_video_btn.setEnabled(True)
 
 
 def main():
