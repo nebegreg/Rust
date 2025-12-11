@@ -563,58 +563,66 @@ class SAM3VideoTracker:
         """
         print(f"\n[TRACKING] Propagating from frame {start_frame} to {end_frame}")
 
-        # Request propagation
-        response = self.video_predictor.handle_request(
-            request=dict(
-                type="propagate",
-                session_id=session.session_id,
-                start_frame=start_frame,
-                end_frame=end_frame
-            )
-        )
-
-        # Process all frame outputs
-        frame_outputs = response.get("frame_outputs", {})
-
-        # If frame_outputs is empty, check if results are in 'outputs' key
-        if not frame_outputs and "outputs" in response:
-            # Single frame response
-            frame_outputs = {start_frame: response["outputs"]}
-
+        # Use handle_stream_request with propagate_in_video
+        # This returns an iterator that yields results for each frame
         results = {}
 
-        for frame_idx, output in frame_outputs.items():
-            # Handle SAM3 video API format
-            if "out_binary_masks" in output:
-                masks = output["out_binary_masks"]
-                boxes_xywh = output.get("out_boxes_xywh")
-                scores = output.get("out_probs")
+        try:
+            for response in self.video_predictor.handle_stream_request(
+                request=dict(
+                    type="propagate_in_video",
+                    session_id=session.session_id
+                )
+            ):
+                frame_idx = response.get("frame_index")
+                if frame_idx is None:
+                    continue
 
-                # Convert boxes from xywh to xyxy if present
-                if boxes_xywh is not None:
-                    boxes_xywh = _to_numpy(boxes_xywh)
-                    boxes = np.zeros_like(boxes_xywh)
-                    boxes[:, 0] = boxes_xywh[:, 0]
-                    boxes[:, 1] = boxes_xywh[:, 1]
-                    boxes[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2]
-                    boxes[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3]
+                # Only process frames in our range
+                if frame_idx < start_frame or frame_idx > end_frame:
+                    continue
+
+                output = response.get("outputs", {})
+
+                # Handle SAM3 video API format
+                if "out_binary_masks" in output:
+                    masks = output["out_binary_masks"]
+                    boxes_xywh = output.get("out_boxes_xywh")
+                    scores = output.get("out_probs")
+
+                    # Convert boxes from xywh to xyxy if present
+                    if boxes_xywh is not None:
+                        boxes_xywh = _to_numpy(boxes_xywh)
+                        boxes = np.zeros_like(boxes_xywh)
+                        boxes[:, 0] = boxes_xywh[:, 0]
+                        boxes[:, 1] = boxes_xywh[:, 1]
+                        boxes[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2]
+                        boxes[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3]
+                    else:
+                        boxes = None
                 else:
-                    boxes = None
-            else:
-                # Standard format
-                masks = output.get("masks")
-                boxes = output.get("boxes")
-                scores = output.get("scores")
+                    # Standard format
+                    masks = output.get("masks")
+                    boxes = output.get("boxes")
+                    scores = output.get("scores")
 
-            result = SegmentationResult(
-                masks=masks,
-                boxes=boxes,
-                scores=scores,
-                prompt_type=PromptType.TEXT,  # Inherited from initial prompt
-                prompt_data="propagated"
-            )
-            results[int(frame_idx)] = result
-            session.add_frame_result(int(frame_idx), result)
+                result = SegmentationResult(
+                    masks=masks,
+                    boxes=boxes,
+                    scores=scores,
+                    prompt_type=PromptType.TEXT,  # Inherited from initial prompt
+                    prompt_data="propagated"
+                )
+                results[int(frame_idx)] = result
+                session.add_frame_result(int(frame_idx), result)
+
+                # Print progress every 10 frames
+                if frame_idx % 10 == 0:
+                    print(f"  Processed frame {frame_idx}...")
+
+        except Exception as e:
+            print(f"  Error during propagation: {e}")
+            raise
 
         print(f"✓ Propagated tracking to {len(results)} frames")
 
