@@ -432,11 +432,32 @@ class SAM3VideoTracker:
             )
         )
 
-        # Extract outputs
-        output = response["outputs"]
-        masks = output["masks"]
-        boxes = output["boxes"]
-        scores = output["scores"]
+        # Debug: print response structure
+        print(f"  Response keys: {list(response.keys())}")
+
+        # Extract outputs - handle different response formats
+        if "outputs" in response:
+            output = response["outputs"]
+            print(f"  Output keys: {list(output.keys())}")
+        else:
+            # Response might BE the output directly
+            output = response
+            print(f"  Direct output keys: {list(output.keys())}")
+
+        # Extract masks, boxes, scores with fallbacks
+        if "masks" in output:
+            masks = output["masks"]
+            boxes = output.get("boxes", None)
+            scores = output.get("scores", None)
+        elif "mask" in output:
+            # Singular form
+            masks = output["mask"]
+            boxes = output.get("box", output.get("boxes", None))
+            scores = output.get("score", output.get("scores", None))
+        else:
+            # Print available keys for debugging
+            print(f"  ERROR: No masks found in output. Available keys: {list(output.keys())}")
+            raise KeyError(f"Cannot find masks in response. Available keys: {list(output.keys())}")
 
         result = SegmentationResult(
             masks=masks,
