@@ -54,6 +54,13 @@ class PromptType(Enum):
     MASK = "mask"
 
 
+def _to_numpy(tensor_or_array):
+    """Convert PyTorch tensor to numpy array if needed."""
+    if hasattr(tensor_or_array, 'detach'):  # It's a PyTorch tensor
+        return tensor_or_array.detach().cpu().numpy()
+    return tensor_or_array
+
+
 @dataclass
 class SegmentationResult:
     """Result from SAM3 segmentation."""
@@ -62,6 +69,12 @@ class SegmentationResult:
     scores: np.ndarray  # (N,) - Confidence scores
     prompt_type: PromptType
     prompt_data: Any
+
+    def __post_init__(self):
+        """Convert tensors to numpy arrays if needed."""
+        self.masks = _to_numpy(self.masks)
+        self.boxes = _to_numpy(self.boxes)
+        self.scores = _to_numpy(self.scores)
 
     def get_best_mask(self) -> Tuple[np.ndarray, float]:
         """Get the mask with highest confidence."""

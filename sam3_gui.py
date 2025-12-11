@@ -107,6 +107,10 @@ class ImageViewport(QLabel):
 
     def set_mask(self, mask: np.ndarray, alpha: float = 0.5):
         """Set mask overlay (binary numpy array)."""
+        # Convert PyTorch tensor to numpy if needed
+        import torch
+        if isinstance(mask, torch.Tensor):
+            mask = mask.detach().cpu().numpy()
         self.mask = mask.copy()
         self.overlay_alpha = alpha
         self._update_display()
@@ -616,15 +620,58 @@ class SAM3MainWindow(QMainWindow):
             self.status_bar.showMessage(f"Loaded: {self.current_image_path.name}")
 
     def _load_video(self):
-        """Load video file."""
+        """Load video file (loads first frame for now)."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Video",
-            "", "Videos (*.mp4 *.avi *.mov)"
+            "", "Videos (*.mp4 *.avi *.mov *.mkv)"
         )
 
         if file_path:
-            self.status_bar.showMessage(f"Video loading: {Path(file_path).name}")
-            # TODO: Implement video loading
+            self.status_bar.showMessage(f"Loading video: {Path(file_path).name}")
+
+            try:
+                # Open video with OpenCV
+                cap = cv2.VideoCapture(str(file_path))
+
+                if not cap.isOpened():
+                    self.status_bar.showMessage(f"Error: Cannot open video {Path(file_path).name}")
+                    return
+
+                # Get video info
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+                # Read first frame
+                ret, frame = cap.read()
+                cap.release()
+
+                if not ret:
+                    self.status_bar.showMessage(f"Error: Cannot read first frame")
+                    return
+
+                # Convert BGR to RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                # Save first frame to temporary file for processing
+                import tempfile
+                temp_dir = Path(tempfile.gettempdir())
+                temp_frame = temp_dir / f"sam3_video_frame_{Path(file_path).stem}.png"
+                cv2.imwrite(str(temp_frame), frame)  # Save as BGR for OpenCV compatibility
+
+                # Store temp frame path and load first frame
+                self.current_image_path = temp_frame
+                self.viewport.set_image(frame_rgb)
+
+                self.status_bar.showMessage(
+                    f"Video loaded: {Path(file_path).name} - "
+                    f"{width}x{height}, {frame_count} frames @ {fps:.1f}fps "
+                    f"(showing first frame - use CLI for full video tracking)"
+                )
+
+            except Exception as e:
+                self.status_bar.showMessage(f"Error loading video: {str(e)}")
 
     def _segment_with_text(self):
         """Segment with text prompt."""
