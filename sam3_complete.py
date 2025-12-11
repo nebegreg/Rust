@@ -227,21 +227,24 @@ class SAM3ImageProcessor:
         """
         Segment image using point prompts.
 
+        Note: SAM3 image processor currently only supports text prompts.
+        This method is not fully implemented for point prompts.
+
         Args:
             image_path: Path to input image
             points: List of (x, y) coordinates
             point_labels: List of labels (1=foreground, 0=background).
-                         If None, all points are foreground.
 
         Returns:
             SegmentationResult
         """
         print(f"\n[POINT PROMPT] Processing: {image_path}")
         print(f"  Points: {len(points)}")
+        print(f"  WARNING: Point prompts not yet supported for SAM3 image processor")
+        print(f"  Falling back to SAM2-style prompting (may not work)")
 
         # Load image
         image = Image.open(str(image_path))
-        image_np = np.array(image)
 
         # Prepare points
         point_coords = np.array(points, dtype=np.float32)
@@ -250,33 +253,14 @@ class SAM3ImageProcessor:
         else:
             point_labels = np.array(point_labels, dtype=np.int32)
 
-        for i, ((x, y), label) in enumerate(zip(points, point_labels)):
-            label_str = "FG" if label == 1 else "BG"
-            print(f"    Point {i+1}: ({x}, {y}) [{label_str}]")
-
         # Set image
         inference_state = self.processor.set_image(image)
 
-        # Set point prompt
-        output = self.processor.set_point_prompt(
-            state=inference_state,
-            point_coords=point_coords,
-            point_labels=point_labels
-        )
-
-        masks = output["masks"]
-        boxes = output["boxes"]
-        scores = output["scores"]
-
-        print(f"✓ Generated {len(masks)} mask(s)")
-        print(f"  Best score: {scores.max():.3f}")
-
-        return SegmentationResult(
-            masks=masks,
-            boxes=boxes,
-            scores=scores,
-            prompt_type=PromptType.POINT,
-            prompt_data={"points": points, "labels": point_labels.tolist()}
+        # Try to use text prompt as fallback
+        # SAM3 image processor only supports text prompts
+        raise NotImplementedError(
+            "Point prompts are not yet supported for SAM3 image segmentation. "
+            "Use text prompts instead, or use the video tracker for interactive prompts."
         )
 
     def segment_with_box(
@@ -287,6 +271,9 @@ class SAM3ImageProcessor:
         """
         Segment image using bounding box prompt.
 
+        Note: SAM3 image processor currently only supports text prompts.
+        This method is not fully implemented for box prompts.
+
         Args:
             image_path: Path to input image
             box: Bounding box as (x1, y1, x2, y2)
@@ -296,7 +283,14 @@ class SAM3ImageProcessor:
         """
         print(f"\n[BOX PROMPT] Processing: {image_path}")
         print(f"  Box: ({box[0]}, {box[1]}) -> ({box[2]}, {box[3]})")
+        print(f"  WARNING: Box prompts not yet supported for SAM3 image processor")
 
+        raise NotImplementedError(
+            "Box prompts are not yet supported for SAM3 image segmentation. "
+            "Use text prompts instead, or use the video tracker for interactive prompts."
+        )
+
+        # The following code is kept for reference but won't execute
         # Load image
         image = Image.open(str(image_path))
 
