@@ -78,11 +78,22 @@ class ImageViewport(QLabel):
 
         # Image data
         self.image: Optional[np.ndarray] = None  # RGB image
-        self.mask: Optional[np.ndarray] = None  # Binary mask
+        self.mask: Optional[np.ndarray] = None  # Binary mask (single mask, legacy)
+        self.masks: List[np.ndarray] = []  # Multiple masks
         self.overlay_alpha = 0.5
 
         # Display
         self.pixmap: Optional[QPixmap] = None
+
+        # Colors for multiple masks
+        self.mask_colors = [
+            [0, 255, 0],    # Green
+            [255, 0, 0],    # Red
+            [0, 0, 255],    # Blue
+            [255, 255, 0],  # Yellow
+            [255, 0, 255],  # Magenta
+            [0, 255, 255],  # Cyan
+        ]
 
     def set_image(self, image: np.ndarray):
         """Set image to display (RGB numpy array)."""
@@ -109,6 +120,30 @@ class ImageViewport(QLabel):
         self.overlay_alpha = alpha
         self._update_display()
 
+    def set_masks(self, masks: List[np.ndarray], alpha: float = 0.5):
+        """Set multiple masks to display with different colors."""
+        import torch
+
+        self.masks = []
+        for mask in masks:
+            # Convert PyTorch tensor to numpy if needed
+            if isinstance(mask, torch.Tensor):
+                mask = mask.detach().cpu().numpy()
+
+            # Ensure mask is 2D
+            while mask.ndim > 2:
+                mask = mask.squeeze(0)
+
+            self.masks.append(mask.copy())
+
+        self.overlay_alpha = alpha
+        self._update_display()
+
+    def clear_masks(self):
+        """Clear all masks."""
+        self.mask = None
+        self.masks = []
+        self._update_display()
 
     def _update_display(self):
         """Update the displayed image with overlays."""
@@ -118,8 +153,18 @@ class ImageViewport(QLabel):
         # Start with original image
         display = self.image.copy()
 
-        # Add mask overlay
-        if self.mask is not None:
+        # Add multiple masks with different colors
+        if self.masks:
+            overlay = display.copy()
+            for i, mask in enumerate(self.masks):
+                color = self.mask_colors[i % len(self.mask_colors)]
+                overlay[mask > 0] = color
+            display = cv2.addWeighted(
+                display, 1 - self.overlay_alpha,
+                overlay, self.overlay_alpha, 0
+            )
+        # Add single mask overlay (legacy support)
+        elif self.mask is not None:
             overlay = display.copy()
             overlay[self.mask > 0] = [0, 255, 0]  # Green overlay
             display = cv2.addWeighted(
@@ -206,7 +251,7 @@ class SAM3MainWindow(QMainWindow):
         self.video_path: Optional[Path] = None
         self.video_cap: Optional[cv2.VideoCapture] = None
         self.video_frames: List[np.ndarray] = []  # Cached frames
-        self.video_masks: Dict[int, np.ndarray] = {}  # Frame index -> mask
+        self.video_masks: Dict[int, List[np.ndarray]] = {}  # Frame index -> list of masks
         self.current_frame_idx = 0
         self.total_frames = 0
         self.fps = 0.0
@@ -395,6 +440,24 @@ class SAM3MainWindow(QMainWindow):
         results_layout.addWidget(self.results_text)
 
         layout.addWidget(results_group)
+
+        # Mask selector
+        mask_group = QGroupBox("Detected Masks")
+        mask_layout = QVBoxLayout(mask_group)
+
+        mask_layout.addWidget(QLabel("Select masks to display/track:"))
+
+        self.mask_list = QListWidget()
+        self.mask_list.setMaximumHeight(200)
+        self.mask_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.mask_list.itemSelectionChanged.connect(self._on_mask_selection_changed)
+        mask_layout.addWidget(self.mask_list)
+
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(self._select_all_masks)
+        mask_layout.addWidget(self.select_all_btn)
+
+        layout.addWidget(mask_group)
 
         # Export controls
         export_group = QGroupBox("Export")
@@ -619,12 +682,11 @@ class SAM3MainWindow(QMainWindow):
         # Display frame
         self.viewport.set_image(frame_rgb)
 
-        # Display mask if available for this frame
+        # Display masks if available for this frame
         if frame_idx in self.video_masks:
-            self.viewport.set_mask(self.video_masks[frame_idx])
+            self.viewport.set_masks(self.video_masks[frame_idx])
         else:
-            self.viewport.mask = None
-            self.viewport._update_display()
+            self.viewport.clear_masks()
 
         self.current_frame_idx = frame_idx
 
@@ -667,21 +729,54 @@ class SAM3MainWindow(QMainWindow):
         self.alpha_label.setText(f"{value}%")
         self.viewport.set_overlay_alpha(alpha)
 
+    def _on_mask_selection_changed(self):
+        """Handle mask selection change."""
+        if self.current_result is None:
+            return
+
+        # Get selected mask indices
+        selected_indices = [i.row() for i in self.mask_list.selectedIndexes()]
+
+        if not selected_indices:
+            self.viewport.clear_masks()
+            self.status_bar.showMessage("No masks selected")
+            return
+
+        # Display selected masks
+        selected_masks = [self.current_result.masks[i] for i in selected_indices]
+        self.viewport.set_masks(selected_masks)
+        self.status_bar.showMessage(f"Displaying {len(selected_indices)} mask(s)")
+
+    def _select_all_masks(self):
+        """Select all masks in the list."""
+        for i in range(self.mask_list.count()):
+            self.mask_list.item(i).setSelected(True)
 
     def _on_result_ready(self, result: SegmentationResult):
         """Handle segmentation result."""
         self.current_result = result
 
-        # Display mask
-        best_mask, score = result.get_best_mask()
-        self.viewport.set_mask(best_mask)
+        # Populate mask list
+        self.mask_list.clear()
+        for i, (box, score) in enumerate(zip(result.boxes, result.scores)):
+            x1, y1, x2, y2 = box
+            item_text = f"Mask {i+1}: score={score:.3f} [{int(x1)}, {int(y1)}, {int(x2)}, {int(y2)}]"
+            self.mask_list.addItem(item_text)
+
+        # Select all masks by default
+        for i in range(self.mask_list.count()):
+            self.mask_list.item(i).setSelected(True)
+
+        # Display all masks
+        self.viewport.set_masks([result.masks[i] for i in range(len(result.masks))])
 
         # Update results text
+        best_mask, best_score = result.get_best_mask()
         info = f"""Segmentation Complete
 ━━━━━━━━━━━━━━━━━━━━
 Prompt Type: {result.prompt_type.value}
 Masks Found: {len(result.masks)}
-Best Score: {score:.3f}
+Best Score: {best_score:.3f}
 
 Bounding Boxes:
 """
@@ -690,7 +785,7 @@ Bounding Boxes:
             info += f"  {i+1}. [{int(x1)}, {int(y1)}, {int(x2)}, {int(y2)}] (score: {s:.3f})\n"
 
         self.results_text.setText(info)
-        self.status_bar.showMessage(f"Segmentation complete - Score: {score:.3f}")
+        self.status_bar.showMessage(f"✓ Found {len(result.masks)} masks - All selected")
 
     def _on_error(self, error_msg: str):
         """Handle error."""
@@ -771,41 +866,48 @@ Bounding Boxes:
             return
 
         output_path = Path(output_dir)
-        self.status_bar.showMessage(f"Exporting {len(self.video_masks)} masks...")
+
+        # Count total masks to export
+        total_masks = sum(len(masks) for masks in self.video_masks.values())
+        self.status_bar.showMessage(f"Exporting {total_masks} masks from {len(self.video_masks)} frames...")
 
         try:
             # Create subdirectory for masks
             masks_dir = output_path / f"{self.video_path.stem}_masks"
             masks_dir.mkdir(exist_ok=True)
 
-            # Export each mask
+            # Export each mask for each frame
             exported_count = 0
+            num_objects = len(self.video_masks[0]) if 0 in self.video_masks else 0
+
             for frame_idx in sorted(self.video_masks.keys()):
-                mask = self.video_masks[frame_idx]
+                masks_list = self.video_masks[frame_idx]
 
-                # Ensure mask is 2D and valid
-                if mask.ndim > 2:
-                    mask = mask.squeeze()
+                # Export each object's mask separately
+                for obj_idx, mask in enumerate(masks_list):
+                    # Ensure mask is 2D and valid
+                    if mask.ndim > 2:
+                        mask = mask.squeeze()
 
-                # Convert to uint8
-                if mask.dtype != np.uint8:
-                    mask_uint8 = (mask * 255).astype(np.uint8)
-                else:
-                    mask_uint8 = mask
+                    # Convert to uint8
+                    if mask.dtype != np.uint8:
+                        mask_uint8 = (mask * 255).astype(np.uint8)
+                    else:
+                        mask_uint8 = mask
 
-                # Save mask
-                mask_filename = masks_dir / f"mask_{frame_idx:04d}.png"
+                    # Save mask with object ID
+                    mask_filename = masks_dir / f"obj{obj_idx+1}_frame_{frame_idx:04d}.png"
 
-                try:
-                    cv2.imwrite(str(mask_filename), mask_uint8)
-                    exported_count += 1
+                    try:
+                        cv2.imwrite(str(mask_filename), mask_uint8)
+                        exported_count += 1
 
-                    # Update status every 10 frames
-                    if exported_count % 10 == 0:
-                        self.status_bar.showMessage(f"Exported {exported_count}/{len(self.video_masks)} masks...")
-                except Exception as e:
-                    print(f"Error exporting frame {frame_idx}: {e}")
-                    continue
+                        # Update status every 10 masks
+                        if exported_count % 10 == 0:
+                            self.status_bar.showMessage(f"Exported {exported_count}/{total_masks} masks...")
+                    except Exception as e:
+                        print(f"Error exporting frame {frame_idx} object {obj_idx}: {e}")
+                        continue
 
             # Create a summary file
             summary_file = masks_dir / "export_info.txt"
@@ -813,11 +915,13 @@ Bounding Boxes:
                 f.write(f"Video: {self.video_path.name}\n")
                 f.write(f"Total frames: {self.total_frames}\n")
                 f.write(f"Tracked frames: {len(self.video_masks)}\n")
+                f.write(f"Number of objects: {num_objects}\n")
                 f.write(f"Exported masks: {exported_count}\n")
                 f.write(f"Frame indices: {sorted(self.video_masks.keys())}\n")
+                f.write(f"\nNaming format: obj[1-{num_objects}]_frame_[0000-{self.total_frames:04d}].png\n")
 
             self.status_bar.showMessage(
-                f"✓ Exported {exported_count} masks to {masks_dir.name}"
+                f"✓ Exported {exported_count} masks ({num_objects} objects × {len(self.video_masks)} frames)"
             )
 
         except Exception as e:
@@ -877,7 +981,7 @@ Bounding Boxes:
             self.timeline_slider.setValue(0)  # Reset to start
 
     def _track_video(self):
-        """Track object through entire video using SAM3VideoTracker."""
+        """Track selected objects through entire video using SAM3VideoTracker."""
         if self.video_path is None:
             self.status_bar.showMessage("Error: No video loaded")
             return
@@ -887,9 +991,17 @@ Bounding Boxes:
             self.status_bar.showMessage("Error: Enter a text prompt for tracking")
             return
 
+        # Get selected mask indices
+        selected_indices = [i.row() for i in self.mask_list.selectedIndexes()]
+        if not selected_indices:
+            self.status_bar.showMessage("Error: Select at least one mask to track")
+            return
+
         # Disable controls during tracking
         self.track_video_btn.setEnabled(False)
-        self.status_bar.showMessage(f"Tracking '{text_prompt}' through {self.total_frames} frames...")
+        self.status_bar.showMessage(
+            f"Tracking {len(selected_indices)} object(s) through {self.total_frames} frames..."
+        )
 
         try:
             # Import SAM3VideoTracker
@@ -908,9 +1020,9 @@ Bounding Boxes:
                 text_prompt=text_prompt
             )
 
-            # Store mask for first frame
-            best_mask, score = result.get_best_mask()
-            self.video_masks[0] = best_mask
+            # Store selected masks for first frame
+            selected_masks = [result.masks[i] for i in selected_indices]
+            self.video_masks[0] = selected_masks
 
             # Propagate tracking across all frames
             self.status_bar.showMessage(f"Propagating tracking to all frames...")
@@ -921,19 +1033,25 @@ Bounding Boxes:
                 end_frame=self.total_frames - 1
             )
 
-            # Store all masks
+            # Store selected masks for all frames
             for frame_idx, frame_result in session.frame_results.items():
-                mask, _ = frame_result.get_best_mask()
-                self.video_masks[frame_idx] = mask
+                # Get masks for selected indices
+                if frame_idx < len(frame_result.masks):
+                    frame_selected_masks = [
+                        frame_result.masks[i]
+                        for i in selected_indices
+                        if i < len(frame_result.masks)
+                    ]
+                    self.video_masks[frame_idx] = frame_selected_masks
 
-            # Update current frame to show mask
+            # Update current frame to show masks
             self._load_frame(self.current_frame_idx)
 
             # Enable video export button
             self.export_video_btn.setEnabled(True)
 
             self.status_bar.showMessage(
-                f"✓ Tracking complete! Processed {len(self.video_masks)} frames - Ready to export"
+                f"✓ Tracking complete! Tracked {len(selected_indices)} object(s) across {len(self.video_masks)} frames"
             )
 
         except Exception as e:
