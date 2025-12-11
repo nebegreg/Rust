@@ -1057,10 +1057,66 @@ Bounding Boxes:
 
 def main():
     """Main entry point."""
+    import argparse
+
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="SAM3 GUI - Professional Segmentation")
+    parser.add_argument("--image", type=str, help="Load image file directly (bypasses file dialog)")
+    parser.add_argument("--video", type=str, help="Load video file directly (bypasses file dialog)")
+    args = parser.parse_args()
+
     app = QApplication(sys.argv)
     app.setApplicationName("SAM3 Professional")
 
     window = SAM3MainWindow()
+
+    # Load file directly if provided
+    if args.image:
+        image_path = Path(args.image)
+        if image_path.exists():
+            window.current_image_path = image_path
+            image = cv2.imread(str(image_path))
+            if image is not None:
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                window.viewport.set_image(image_rgb)
+                window.status_bar.showMessage(f"Loaded: {image_path.name}")
+            else:
+                print(f"Error: Cannot read image {image_path}")
+        else:
+            print(f"Error: Image file not found: {image_path}")
+
+    elif args.video:
+        video_path = Path(args.video)
+        if video_path.exists():
+            window.video_cap = cv2.VideoCapture(str(video_path))
+            if window.video_cap.isOpened():
+                window.fps = window.video_cap.get(cv2.CAP_PROP_FPS)
+                window.total_frames = int(window.video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                window.video_path = video_path
+                window.video_frames = []
+                window.video_masks = {}
+                window.current_frame_idx = 0
+
+                # Load first frame
+                window._load_frame(0)
+
+                # Setup timeline
+                window.timeline_slider.setMaximum(window.total_frames - 1)
+                window.timeline_slider.setValue(0)
+                window.timeline_slider.setEnabled(True)
+                window.frame_label.setText(f"0 / {window.total_frames}")
+                window.play_btn.setEnabled(True)
+                window.prev_frame_btn.setEnabled(True)
+                window.next_frame_btn.setEnabled(True)
+                window.track_video_btn.setEnabled(True)
+                window.timeline_widget.setVisible(True)
+
+                window.status_bar.showMessage(f"Video loaded: {video_path.name} - {window.total_frames} frames")
+            else:
+                print(f"Error: Cannot open video {video_path}")
+        else:
+            print(f"Error: Video file not found: {video_path}")
+
     window.show()
 
     sys.exit(app.exec())
