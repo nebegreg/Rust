@@ -17,6 +17,12 @@ Usage:
     python sam3_gui.py
 """
 
+# IMPORTANT: Set environment variables BEFORE importing Qt to prevent GVFS hang
+import os
+os.environ['QT_QPA_PLATFORMTHEME'] = ''  # Disable native platform theme
+os.environ['GIO_USE_VFS'] = 'local'      # Disable GVFS
+os.environ['QT_FILE_DIALOG_NO_NATIVE'] = '1'  # Force Qt dialogs
+
 import sys
 import numpy as np
 import cv2
