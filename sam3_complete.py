@@ -444,8 +444,27 @@ class SAM3VideoTracker:
             output = response
             print(f"  Direct output keys: {list(output.keys())}")
 
-        # Extract masks, boxes, scores with fallbacks
-        if "masks" in output:
+        # Extract masks, boxes, scores - handle SAM3 video API format
+        if "out_binary_masks" in output:
+            # SAM3 video API format
+            masks = output["out_binary_masks"]
+            boxes_xywh = output.get("out_boxes_xywh")
+            scores = output.get("out_probs")
+
+            # Convert boxes from xywh to xyxy format if present
+            if boxes_xywh is not None:
+                boxes_xywh = _to_numpy(boxes_xywh)
+                # xywh to xyxy: [x, y, w, h] -> [x1, y1, x2, y2]
+                boxes = np.zeros_like(boxes_xywh)
+                boxes[:, 0] = boxes_xywh[:, 0]  # x1 = x
+                boxes[:, 1] = boxes_xywh[:, 1]  # y1 = y
+                boxes[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2]  # x2 = x + w
+                boxes[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3]  # y2 = y + h
+            else:
+                boxes = None
+
+        elif "masks" in output:
+            # Standard format
             masks = output["masks"]
             boxes = output.get("boxes", None)
             scores = output.get("scores", None)
@@ -555,19 +574,47 @@ class SAM3VideoTracker:
         )
 
         # Process all frame outputs
-        frame_outputs = response["frame_outputs"]
+        frame_outputs = response.get("frame_outputs", {})
+
+        # If frame_outputs is empty, check if results are in 'outputs' key
+        if not frame_outputs and "outputs" in response:
+            # Single frame response
+            frame_outputs = {start_frame: response["outputs"]}
+
         results = {}
 
         for frame_idx, output in frame_outputs.items():
+            # Handle SAM3 video API format
+            if "out_binary_masks" in output:
+                masks = output["out_binary_masks"]
+                boxes_xywh = output.get("out_boxes_xywh")
+                scores = output.get("out_probs")
+
+                # Convert boxes from xywh to xyxy if present
+                if boxes_xywh is not None:
+                    boxes_xywh = _to_numpy(boxes_xywh)
+                    boxes = np.zeros_like(boxes_xywh)
+                    boxes[:, 0] = boxes_xywh[:, 0]
+                    boxes[:, 1] = boxes_xywh[:, 1]
+                    boxes[:, 2] = boxes_xywh[:, 0] + boxes_xywh[:, 2]
+                    boxes[:, 3] = boxes_xywh[:, 1] + boxes_xywh[:, 3]
+                else:
+                    boxes = None
+            else:
+                # Standard format
+                masks = output.get("masks")
+                boxes = output.get("boxes")
+                scores = output.get("scores")
+
             result = SegmentationResult(
-                masks=output["masks"],
-                boxes=output["boxes"],
-                scores=output["scores"],
+                masks=masks,
+                boxes=boxes,
+                scores=scores,
                 prompt_type=PromptType.TEXT,  # Inherited from initial prompt
                 prompt_data="propagated"
             )
-            results[frame_idx] = result
-            session.add_frame_result(frame_idx, result)
+            results[int(frame_idx)] = result
+            session.add_frame_result(int(frame_idx), result)
 
         print(f"✓ Propagated tracking to {len(results)} frames")
 
