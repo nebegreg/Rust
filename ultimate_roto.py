@@ -470,11 +470,15 @@ class ViTMatteProcessor:
 
         print("Loading ViTMatte model...")
         try:
+            # Add ViTMatte to path for its internal imports
+            vitmatte_dir = Path(__file__).parent / "ViTMatte-main"
+            if str(vitmatte_dir) not in sys.path:
+                sys.path.insert(0, str(vitmatte_dir))
+
             from detectron2.config import LazyConfig, instantiate
             from detectron2.checkpoint import DetectionCheckpointer
 
             # Determine config based on model type
-            vitmatte_dir = Path(__file__).parent / "ViTMatte-main"
             config_path = vitmatte_dir / "configs" / "common" / "model.py"
 
             if not config_path.exists():
