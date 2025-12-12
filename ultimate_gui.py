@@ -171,6 +171,7 @@ class ProcessingWorker(QThread):
         self.sam3_processor = None
         self.da3_processor = None
         self.matte_processor = None
+        self.matanyone_processor = None  # Video matting
 
     def run_task(self, task_type: str, **kwargs):
         """Queue a task for processing."""
@@ -200,6 +201,10 @@ class ProcessingWorker(QThread):
             elif task_type == "full_pipeline":
                 result = self._run_full_pipeline(**kwargs)
                 self.result_ready.emit("full_pipeline", result)
+
+            elif task_type == "video_matte":
+                result = self._run_video_matte(**kwargs)
+                self.result_ready.emit("video_matte", result)
 
         except Exception as e:
             self.error_occurred.emit(f"{task_type} failed: {str(e)}")
@@ -278,6 +283,27 @@ class ProcessingWorker(QThread):
 
         self.progress_updated.emit("Pipeline complete!")
         return results
+
+    def _run_video_matte(self, video_path, first_frame_mask, output_dir):
+        """Run video matting with MatAnyone."""
+        self.progress_updated.emit("Loading MatAnyone...")
+
+        if self.matanyone_processor is None:
+            from matanyone_wrapper import MatAnyoneProcessor
+            self.matanyone_processor = MatAnyoneProcessor(device="cuda")
+
+        self.progress_updated.emit("Processing video with MatAnyone...")
+        self.progress_updated.emit("(Memory propagation for temporal consistency)")
+
+        result = self.matanyone_processor.process_video(
+            video_path,
+            first_frame_mask,
+            output_dir,
+            save_foreground=True
+        )
+
+        self.progress_updated.emit(f"Video matting complete! {result.total_frames} frames")
+        return result
 
 
 class UltimateMainWindow(QMainWindow):
@@ -412,9 +438,16 @@ class UltimateMainWindow(QMainWindow):
         self.matte_refine_cb.setChecked(True)
         matte_layout.addWidget(self.matte_refine_cb)
 
-        self.matte_btn = QPushButton("Generate Matte")
+        self.matte_btn = QPushButton("Generate Matte (Image)")
         self.matte_btn.clicked.connect(self._run_matte)
         matte_layout.addWidget(self.matte_btn)
+
+        # Video matting with MatAnyone
+        self.video_matte_btn = QPushButton("Video Matte (MatAnyone)")
+        self.video_matte_btn.setStyleSheet("QPushButton { background-color: #9c27b0; color: white; font-weight: bold; }")
+        self.video_matte_btn.setToolTip("SAM3 mask on first frame -> MatAnyone propagates through video")
+        self.video_matte_btn.clicked.connect(self._run_video_matte)
+        matte_layout.addWidget(self.video_matte_btn)
 
         layout.addWidget(matte_group)
 
@@ -980,6 +1013,57 @@ class UltimateMainWindow(QMainWindow):
             compute_matte=self.pipeline_matte_cb.isChecked()
         )
 
+    def _run_video_matte(self):
+        """Run video matting with MatAnyone (SAM3 -> MatAnyone pipeline)."""
+        if not self.is_video_mode or self.video_path is None:
+            self.status_bar.showMessage("Error: Load a video first")
+            return
+
+        # Check if we have a SAM3 mask for current frame
+        if 'sam3' not in self.results:
+            # Need to run SAM3 first
+            prompt = self.sam3_prompt.text().strip()
+            if not prompt:
+                self.status_bar.showMessage("Error: Enter text prompt and run SAM3 on first frame")
+                return
+
+            QMessageBox.information(
+                self,
+                "Video Matting",
+                "First, run SAM3 on the first frame to create a mask.\n\n"
+                "1. Go to frame 0\n"
+                "2. Enter text prompt (e.g., 'person')\n"
+                "3. Click 'Segment'\n"
+                "4. Then click 'Video Matte (MatAnyone)'"
+            )
+            return
+
+        # Get SAM3 mask
+        mask, score = self.results['sam3'].get_best_mask()
+
+        # Save mask for MatAnyone
+        import tempfile
+        temp_dir = Path(tempfile.mkdtemp(prefix="matanyone_"))
+        mask_path = temp_dir / "first_frame_mask.png"
+        output_dir = temp_dir / "output"
+        output_dir.mkdir()
+
+        # Save mask as PNG
+        mask_uint8 = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
+        cv2.imwrite(str(mask_path), mask_uint8)
+
+        self.status_bar.showMessage(f"Starting MatAnyone video matting...")
+        self._set_processing(True)
+
+        # Store output dir for result handling
+        self._video_matte_output_dir = output_dir
+
+        self.worker.run_task("video_matte",
+            video_path=str(self.video_path),
+            first_frame_mask=str(mask_path),
+            output_dir=str(output_dir)
+        )
+
     def _on_result_ready(self, task_type: str, result):
         """Handle processing result."""
         self._set_processing(False)
@@ -1008,6 +1092,35 @@ class UltimateMainWindow(QMainWindow):
                 self._display_matte_result(result['matte'])
 
             self._create_composite()
+
+        elif task_type == "video_matte":
+            self.results['video_matte'] = result
+            self._display_video_matte_result(result)
+
+    def _display_video_matte_result(self, result):
+        """Display video matting result."""
+        info = f"Video Matting (MatAnyone)\n{'='*30}\n"
+        info += f"Frames processed: {result.total_frames}\n"
+        info += f"Resolution: {result.resolution[0]}x{result.resolution[1]}\n"
+        info += f"FPS: {result.fps:.1f}\n"
+        info += f"Processing time: {result.processing_time_sec:.1f}s\n"
+        info += f"\nOutput:\n"
+        info += f"  Alpha: {result.alpha_dir}\n"
+        if result.foreground_dir:
+            info += f"  Foreground: {result.foreground_dir}\n"
+
+        self.results_text.setText(info)
+
+        QMessageBox.information(
+            self,
+            "Video Matting Complete",
+            f"MatAnyone video matting complete!\n\n"
+            f"Frames: {result.total_frames}\n"
+            f"Time: {result.processing_time_sec:.1f}s\n\n"
+            f"Output directory:\n{result.alpha_dir.parent}"
+        )
+
+        self.status_bar.showMessage(f"Video matte complete: {result.total_frames} frames in {result.processing_time_sec:.1f}s")
 
     def _display_sam3_result(self, result):
         """Display SAM3 result."""
