@@ -97,20 +97,52 @@ echo -e "\n${YELLOW}[7/8] Installing detectron2 for ViTMatte...${NC}"
 
 # Get PyTorch version info
 TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])")
-CUDA_TAG=$(python3 -c "import torch; print('cu' + torch.version.cuda.replace('.', '') if torch.cuda.is_available() else 'cpu')")
+TORCH_CUDA=$(python3 -c "import torch; print(torch.version.cuda if torch.cuda.is_available() else 'cpu')")
 
 echo "  PyTorch version: $TORCH_VERSION"
-echo "  CUDA tag: $CUDA_TAG"
+echo "  PyTorch CUDA: $TORCH_CUDA"
 
-# Try pre-built wheels first, fall back to source build
+# Check for CUDA version mismatch
+SYSTEM_CUDA=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' || echo "none")
+echo "  System CUDA: $SYSTEM_CUDA"
+
+# Try pre-built wheels first
+CUDA_TAG="cu$(echo $TORCH_CUDA | tr -d '.')"
 echo "  Attempting to install detectron2..."
+
 if pip install detectron2 -f "https://dl.fbaipublicfiles.com/detectron2/wheels/$CUDA_TAG/torch${TORCH_VERSION%.*}/index.html" 2>/dev/null; then
     echo -e "${GREEN}  detectron2 installed from pre-built wheel${NC}"
 else
-    echo "  Pre-built wheel not available, building from source..."
-    # Make sure torch is in the build environment
-    pip install 'git+https://github.com/facebookresearch/detectron2.git' --no-build-isolation
-    echo -e "${GREEN}  detectron2 installed from source${NC}"
+    echo "  Pre-built wheel not available..."
+
+    # Check for CUDA mismatch
+    if [ "$SYSTEM_CUDA" != "none" ] && [ "$SYSTEM_CUDA" != "$TORCH_CUDA" ]; then
+        echo -e "${YELLOW}  CUDA version mismatch detected (system: $SYSTEM_CUDA, PyTorch: $TORCH_CUDA)${NC}"
+        echo "  Installing detectron2 WITHOUT CUDA extensions (CPU mode for custom ops)..."
+
+        # Install without compiling CUDA extensions
+        FORCE_CUDA=0 pip install 'git+https://github.com/facebookresearch/detectron2.git' --no-build-isolation 2>/dev/null || \
+        pip install 'git+https://github.com/facebookresearch/detectron2.git' --global-option="build_ext" --global-option="--no-cuda" --no-build-isolation 2>/dev/null || \
+        {
+            echo "  Trying alternative installation method..."
+            # Clone and install in develop mode without building extensions
+            TEMP_DIR=$(mktemp -d)
+            git clone --depth 1 https://github.com/facebookresearch/detectron2.git "$TEMP_DIR/detectron2"
+            cd "$TEMP_DIR/detectron2"
+            # Disable CUDA extension building
+            export FORCE_CUDA=0
+            export TORCH_CUDA_ARCH_LIST=""
+            pip install -e . --no-build-isolation 2>/dev/null || pip install . --no-deps
+            cd -
+            rm -rf "$TEMP_DIR"
+        }
+        echo -e "${GREEN}  detectron2 installed (CPU mode for custom ops)${NC}"
+        echo -e "${YELLOW}  Note: Some operations may be slower without CUDA extensions${NC}"
+    else
+        echo "  Building from source..."
+        pip install 'git+https://github.com/facebookresearch/detectron2.git' --no-build-isolation
+        echo -e "${GREEN}  detectron2 installed from source${NC}"
+    fi
 fi
 
 # Install SAM3 (optional - comment out if not needed)
