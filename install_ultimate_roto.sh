@@ -16,7 +16,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check Python version
-echo -e "\n${YELLOW}[1/7] Checking Python version...${NC}"
+echo -e "\n${YELLOW}[1/8] Checking Python version...${NC}"
 python_version=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d+\.\d+')
 required_version="3.10"
 
@@ -29,24 +29,55 @@ fi
 
 # Create virtual environment (optional)
 if [ "$1" = "--venv" ]; then
-    echo -e "\n${YELLOW}[2/7] Creating virtual environment...${NC}"
+    echo -e "\n${YELLOW}[2/8] Creating virtual environment...${NC}"
     python3 -m venv venv
     source venv/bin/activate
     echo -e "${GREEN}  Virtual environment activated${NC}"
 else
-    echo -e "\n${YELLOW}[2/7] Skipping virtual environment (use --venv to create)${NC}"
+    echo -e "\n${YELLOW}[2/8] Skipping virtual environment (use --venv to create)${NC}"
 fi
 
-# Install PyTorch with CUDA
-echo -e "\n${YELLOW}[3/7] Installing PyTorch with CUDA...${NC}"
+# Upgrade pip
+echo -e "\n${YELLOW}[3/8] Upgrading pip...${NC}"
 pip install --upgrade pip
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Install PyTorch with CUDA first (required for detectron2 build)
+echo -e "\n${YELLOW}[4/8] Installing PyTorch with CUDA...${NC}"
+
+# Detect CUDA version and install appropriate PyTorch
+if command -v nvidia-smi &> /dev/null; then
+    CUDA_VERSION=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9]+\.[0-9]+' | head -1)
+    echo "  Detected CUDA version: $CUDA_VERSION"
+
+    # Choose appropriate PyTorch CUDA version
+    if [[ "$CUDA_VERSION" == "12."* ]]; then
+        echo "  Installing PyTorch for CUDA 12.x..."
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    elif [[ "$CUDA_VERSION" == "11."* ]]; then
+        echo "  Installing PyTorch for CUDA 11.x..."
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    else
+        echo "  Installing PyTorch for CUDA 12.1 (default)..."
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    fi
+else
+    echo "  No NVIDIA GPU detected, installing CPU version..."
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+fi
+
 echo -e "${GREEN}  PyTorch installed${NC}"
 
+# Verify PyTorch installation
+python3 -c "import torch; print(f'  PyTorch {torch.__version__} installed, CUDA: {torch.cuda.is_available()}')"
+
+# Install numpy with compatible version for sam3
+echo -e "\n${YELLOW}[5/8] Installing numpy (compatible version)...${NC}"
+pip install 'numpy>=1.24.0,<2.0.0'
+echo -e "${GREEN}  numpy installed${NC}"
+
 # Install core dependencies
-echo -e "\n${YELLOW}[4/7] Installing core dependencies...${NC}"
+echo -e "\n${YELLOW}[6/8] Installing core dependencies...${NC}"
 pip install \
-    numpy>=1.24.0 \
     opencv-python>=4.8.0 \
     Pillow>=10.0.0 \
     imageio>=2.31.0 \
@@ -55,42 +86,64 @@ pip install \
     PySide6>=6.5.0 \
     omegaconf>=2.3.0 \
     hydra-core>=1.3.0 \
-    huggingface_hub>=0.16.0
+    huggingface_hub>=0.16.0 \
+    requests \
+    scipy
 
 echo -e "${GREEN}  Core dependencies installed${NC}"
 
 # Install detectron2 for ViTMatte
-echo -e "\n${YELLOW}[5/7] Installing detectron2 for ViTMatte...${NC}"
-pip install 'git+https://github.com/facebookresearch/detectron2.git'
-echo -e "${GREEN}  detectron2 installed${NC}"
+echo -e "\n${YELLOW}[7/8] Installing detectron2 for ViTMatte...${NC}"
 
-# Install SAM3
-echo -e "\n${YELLOW}[6/7] Installing SAM3...${NC}"
-pip install 'git+https://github.com/facebookresearch/sam3.git'
-echo -e "${GREEN}  SAM3 installed${NC}"
+# Get PyTorch version info
+TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])")
+CUDA_TAG=$(python3 -c "import torch; print('cu' + torch.version.cuda.replace('.', '') if torch.cuda.is_available() else 'cpu')")
 
-# Authenticate with HuggingFace
-echo -e "\n${YELLOW}[7/7] HuggingFace authentication...${NC}"
-echo "  SAM3 requires HuggingFace authentication."
-echo "  Run: huggingface-cli login"
-echo "  Or set: export HF_TOKEN=your_token"
+echo "  PyTorch version: $TORCH_VERSION"
+echo "  CUDA tag: $CUDA_TAG"
 
-# Extract model files
-echo -e "\n${YELLOW}Extracting model repositories...${NC}"
+# Try pre-built wheels first, fall back to source build
+echo "  Attempting to install detectron2..."
+if pip install detectron2 -f "https://dl.fbaipublicfiles.com/detectron2/wheels/$CUDA_TAG/torch${TORCH_VERSION%.*}/index.html" 2>/dev/null; then
+    echo -e "${GREEN}  detectron2 installed from pre-built wheel${NC}"
+else
+    echo "  Pre-built wheel not available, building from source..."
+    # Make sure torch is in the build environment
+    pip install 'git+https://github.com/facebookresearch/detectron2.git' --no-build-isolation
+    echo -e "${GREEN}  detectron2 installed from source${NC}"
+fi
+
+# Install SAM3 (optional - comment out if not needed)
+echo -e "\n${YELLOW}[8/8] Installing SAM3 (optional)...${NC}"
+if pip install 'git+https://github.com/facebookresearch/sam3.git' 2>/dev/null; then
+    echo -e "${GREEN}  SAM3 installed${NC}"
+else
+    echo -e "${YELLOW}  SAM3 installation failed - you may need to install manually${NC}"
+    echo "  Try: pip install git+https://github.com/facebookresearch/sam3.git"
+fi
+
+# Extract model files if not already done
+echo -e "\n${YELLOW}Checking model repositories...${NC}"
 
 if [ -f "ViTMatte-main.zip" ] && [ ! -d "ViTMatte-main" ]; then
     unzip -q ViTMatte-main.zip
     echo -e "${GREEN}  ViTMatte extracted${NC}"
+elif [ -d "ViTMatte-main" ]; then
+    echo "  ViTMatte already extracted"
 fi
 
 if [ -f "MatAnyone.zip" ] && [ ! -d "matanyone" ]; then
     unzip -q MatAnyone.zip
     echo -e "${GREEN}  MatAnyone extracted${NC}"
+elif [ -d "matanyone" ]; then
+    echo "  MatAnyone already extracted"
 fi
 
 if [ -f "Depth-Anything-3-main.zip" ] && [ ! -d "Depth-Anything-3-main" ]; then
     unzip -q Depth-Anything-3-main.zip
     echo -e "${GREEN}  Depth-Anything-3 extracted${NC}"
+elif [ -d "Depth-Anything-3-main" ]; then
+    echo "  Depth-Anything-3 already extracted"
 fi
 
 # Download model weights
@@ -100,10 +153,20 @@ mkdir -p pretrained_models
 # MatAnyone weights
 if [ ! -f "pretrained_models/matanyone.pth" ]; then
     echo "  Downloading MatAnyone weights..."
-    wget -q -O pretrained_models/matanyone.pth \
+    wget -q --show-progress -O pretrained_models/matanyone.pth \
+        https://github.com/pq-yang/MatAnyone/releases/download/v1.0.0/matanyone.pth || \
+    curl -L -o pretrained_models/matanyone.pth \
         https://github.com/pq-yang/MatAnyone/releases/download/v1.0.0/matanyone.pth
     echo -e "${GREEN}  MatAnyone weights downloaded${NC}"
+else
+    echo "  MatAnyone weights already present"
 fi
+
+# HuggingFace authentication reminder
+echo -e "\n${YELLOW}HuggingFace authentication:${NC}"
+echo "  SAM3 requires HuggingFace authentication."
+echo "  Run: huggingface-cli login"
+echo "  Or set: export HF_TOKEN=your_token"
 
 # ViTMatte weights (manual download required)
 echo -e "\n${YELLOW}ViTMatte weights:${NC}"
@@ -112,27 +175,49 @@ echo "  Place in: ViTMatte-main/pretrained/"
 
 # Verify installation
 echo -e "\n${YELLOW}Verifying installation...${NC}"
-python3 -c "
-import torch
-print(f'  PyTorch: {torch.__version__}')
-print(f'  CUDA available: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'  GPU: {torch.cuda.get_device_name(0)}')
-"
+python3 << 'PYEOF'
+import sys
+print("Python:", sys.version.split()[0])
 
-python3 -c "
+try:
+    import torch
+    print(f"PyTorch: {torch.__version__}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+except Exception as e:
+    print(f"PyTorch: ERROR - {e}")
+
+try:
+    import numpy as np
+    print(f"NumPy: {np.__version__}")
+except Exception as e:
+    print(f"NumPy: ERROR - {e}")
+
 try:
     import cv2
-    print(f'  OpenCV: {cv2.__version__}')
-except: print('  OpenCV: NOT INSTALLED')
-"
+    print(f"OpenCV: {cv2.__version__}")
+except Exception as e:
+    print(f"OpenCV: ERROR - {e}")
 
-python3 -c "
 try:
     from PySide6.QtWidgets import QApplication
-    print('  PySide6: OK')
-except: print('  PySide6: NOT INSTALLED')
-"
+    print("PySide6: OK")
+except Exception as e:
+    print(f"PySide6: ERROR - {e}")
+
+try:
+    import detectron2
+    print(f"Detectron2: {detectron2.__version__}")
+except Exception as e:
+    print(f"Detectron2: ERROR - {e}")
+
+try:
+    from omegaconf import DictConfig
+    print("OmegaConf: OK")
+except Exception as e:
+    print(f"OmegaConf: ERROR - {e}")
+PYEOF
 
 echo -e "\n=============================================="
 echo -e "${GREEN}  Installation Complete!${NC}"
