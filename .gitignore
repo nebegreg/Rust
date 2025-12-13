@@ -53,3 +53,12 @@ setup_dev.sh
 FIXES_AND_IMPROVEMENTS.md
 INSTALLATION_VERSIONS.md
 install_rocky_rtx4090.sh
+
+# Pretrained models (large files)
+pretrained_models/
+
+# Test files
+test_*.mp4
+test_*.png
+test_output_video/
+test_ultimate_output/
