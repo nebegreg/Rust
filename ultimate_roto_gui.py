@@ -309,6 +309,8 @@ class RotoWorker(QThread):
         try:
             if self.task == "process":
                 self._process_image()
+            elif self.task == "process_video":
+                self._process_video()
             elif self.task == "trimap":
                 self._generate_trimap()
             elif self.task == "depth":
@@ -373,6 +375,55 @@ class RotoWorker(QThread):
 
         self.finished.emit({'depth': depth})
 
+    def _process_video(self):
+        """Process video with MatAnyone."""
+        from ultimate_roto import UltimateRoto, RotoConfig
+
+        self.progress.emit(5, "Initializing MatAnyone...")
+
+        config = RotoConfig(
+            device=self.params.get('device', 'cuda'),
+            trimap_erosion=self.params.get('erosion', 15),
+            trimap_dilation=self.params.get('dilation', 30),
+            matanyone_warmup=self.params.get('warmup', 10),
+            matanyone_erode=self.params.get('erosion', 10),
+            matanyone_dilate=self.params.get('dilation', 10),
+        )
+
+        roto = UltimateRoto(config)
+
+        self.progress.emit(15, "SAM3 Segmentation on first frame...")
+
+        # Process first frame to get mask
+        result = roto.process_image(
+            self.params['image_path'],
+            prompt=self.params.get('text'),
+            points=self.params.get('points'),
+            box=self.params.get('box'),
+            estimate_depth=False
+        )
+
+        self.progress.emit(40, "Processing video with MatAnyone...")
+
+        # Use the SAM mask for video processing
+        video_path = self.params['video_path']
+        output_dir = self.params['output_dir']
+
+        # Process video
+        fgr_path, pha_path = roto.process_video(
+            video_path,
+            result.sam_mask,
+            output_dir
+        )
+
+        self.progress.emit(100, "Video processing complete!")
+        self.finished.emit({
+            'video_result': True,
+            'foreground_video': fgr_path,
+            'alpha_video': pha_path,
+            'first_frame_result': result
+        })
+
 
 # =============================================================================
 # MAIN WINDOW
@@ -398,6 +449,12 @@ class UltimateRotoGUI(QMainWindow):
         self.edge_mask: Optional[np.ndarray] = None
         self.hair_mask: Optional[np.ndarray] = None
         self.result = None
+
+        # Video state
+        self.is_video = False
+        self.video_path: Optional[Path] = None
+        self.video_fps = 0.0
+        self.video_frames = 0
 
         self.background_color = np.array([0, 177, 64], dtype=np.uint8)  # Green screen
         self.view_mode = ViewMode.ORIGINAL
@@ -552,10 +609,16 @@ class UltimateRotoGUI(QMainWindow):
         self.depth_check = QCheckBox("Estimate Depth")
         process_layout.addWidget(self.depth_check)
 
-        self.btn_process = QPushButton("Process")
+        self.btn_process = QPushButton("Process Image")
         self.btn_process.setStyleSheet("background-color: #4CAF50; font-weight: bold; font-size: 14px; padding: 10px;")
         self.btn_process.clicked.connect(self._process)
         process_layout.addWidget(self.btn_process)
+
+        self.btn_process_video = QPushButton("Process Video (MatAnyone)")
+        self.btn_process_video.setStyleSheet("background-color: #2196F3; font-weight: bold; font-size: 14px; padding: 10px;")
+        self.btn_process_video.clicked.connect(self._process_video)
+        self.btn_process_video.setEnabled(False)  # Enabled when video loaded
+        process_layout.addWidget(self.btn_process_video)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -775,6 +838,11 @@ class UltimateRotoGUI(QMainWindow):
             self.result = None
             self.viewport.clear_annotations()
 
+            # Reset video state
+            self.is_video = False
+            self.video_path = None
+            self.btn_process_video.setEnabled(False)
+
             self.file_label.setText(f"{self.image_path.name}\n{self.original_image.shape[1]}x{self.original_image.shape[0]}")
             self.statusbar.showMessage(f"Loaded: {self.image_path.name}")
             self._update_info()
@@ -796,6 +864,10 @@ class UltimateRotoGUI(QMainWindow):
 
             if ret:
                 self.image_path = Path(path)
+                self.video_path = Path(path)  # Store video path separately
+                self.is_video = True
+                self.video_fps = fps
+                self.video_frames = total
                 self.original_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 self.viewport.set_image(self.original_image)
 
@@ -804,6 +876,9 @@ class UltimateRotoGUI(QMainWindow):
                 self.alpha = None
                 self.result = None
                 self.viewport.clear_annotations()
+
+                # Enable video processing button
+                self.btn_process_video.setEnabled(True)
 
                 self.file_label.setText(f"VIDEO: {self.image_path.name}\n{total} frames @ {fps:.1f}fps")
                 self.statusbar.showMessage(f"Loaded video: {self.image_path.name} ({total} frames)")
@@ -1069,6 +1144,71 @@ class UltimateRotoGUI(QMainWindow):
 
         self.worker.start()
 
+    def _process_video(self):
+        """Run video processing pipeline with MatAnyone."""
+        if not self.is_video or self.video_path is None:
+            QMessageBox.warning(self, "Error", "No video loaded")
+            return
+
+        if self.original_image is None:
+            QMessageBox.warning(self, "Error", "No video loaded")
+            return
+
+        # Get prompts for first frame
+        text = self.text_input.text().strip()
+        points = self.viewport.get_points()
+        box = self.viewport.get_box()
+
+        if not text and not points and not box:
+            QMessageBox.warning(self, "Error", "Provide a text prompt, add points, or draw a box to segment the first frame")
+            return
+
+        # Get output directory
+        output_dir, _ = QFileDialog.getSaveFileName(
+            self, "Save Video Output", str(self.video_path.parent / f"{self.video_path.stem}_output"),
+            "",
+            options=QFileDialog.Option.DontUseNativeDialog
+        )
+        if not output_dir:
+            return
+
+        # Create output directory
+        from pathlib import Path
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Save first frame for mask generation
+        first_frame_path = output_path / "first_frame.png"
+        cv2.imwrite(str(first_frame_path), cv2.cvtColor(self.original_image, cv2.COLOR_RGB2BGR))
+
+        # Prepare points with labels
+        point_data = None
+        if points:
+            point_data = points
+
+        # Setup worker
+        self.worker.setup(
+            "process_video",
+            image_path=str(first_frame_path),
+            video_path=str(self.video_path),
+            output_dir=str(output_path),
+            text=text if text else None,
+            points=point_data,
+            box=box,
+            device=self.device_combo.currentText(),
+            erosion=self.erosion_spin.value(),
+            dilation=self.dilation_spin.value(),
+            warmup=10
+        )
+
+        # UI update
+        self.btn_process.setEnabled(False)
+        self.btn_process_video.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+
+        self.worker.start()
+
     def _on_progress(self, value: int, message: str):
         """Handle progress update."""
         self.progress_bar.setValue(value)
@@ -1078,10 +1218,35 @@ class UltimateRotoGUI(QMainWindow):
     def _on_finished(self, result):
         """Handle processing complete."""
         self.btn_process.setEnabled(True)
+        if self.is_video:
+            self.btn_process_video.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.progress_label.setText("")
 
-        if hasattr(result, 'alpha'):
+        if isinstance(result, dict) and result.get('video_result'):
+            # Video processing complete
+            fgr_path = result['foreground_video']
+            pha_path = result['alpha_video']
+            first_result = result.get('first_frame_result')
+
+            # Update state with first frame results
+            if first_result:
+                self.result = first_result
+                self.alpha = first_result.alpha
+                self.trimap = first_result.trimap
+                self.foreground = first_result.foreground
+                self.sam_mask = first_result.sam_mask
+
+            self._set_view(ViewMode.ALPHA)
+            QMessageBox.information(
+                self, "Video Processing Complete",
+                f"Video processed successfully!\n\n"
+                f"Foreground: {fgr_path}\n"
+                f"Alpha: {pha_path}"
+            )
+            self.statusbar.showMessage(f"Video saved to: {pha_path}")
+
+        elif hasattr(result, 'alpha'):
             # Full result
             self.result = result
             self.alpha = result.alpha
@@ -1111,6 +1276,8 @@ class UltimateRotoGUI(QMainWindow):
     def _on_error(self, message: str):
         """Handle error."""
         self.btn_process.setEnabled(True)
+        if self.is_video:
+            self.btn_process_video.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.progress_label.setText("")
 
