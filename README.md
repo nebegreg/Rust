@@ -21,6 +21,20 @@ python roto.py image.jpg 100,100 200,200 --output mask.png
 
 **C'est tout.**
 
+### Interface PySide6 (GUI)
+
+```bash
+pip install PySide6 opencv-python numpy torch
+pip install git+https://github.com/facebookresearch/sam3.git
+
+python rotoscope_gui.py
+```
+
+1. Ouvrez une image (PNG/JPG/TIF)
+2. Cliquez pour placer des points foreground
+3. Choisissez le périphérique (Auto, CUDA, CPU)
+4. Lancez « Segmenter » puis « Exporter le masque »
+
 ## Exemples
 
 ```bash
@@ -32,6 +46,9 @@ python roto.py photo.jpg 100,100 200,150 300,200
 
 # Sur CPU (si pas de GPU)
 python roto.py photo.jpg 100,100 --device cpu
+
+# Les points doivent être dans l'image (x,y >= 0)
+python roto.py photo.jpg 120,80 200,140
 ```
 
 ## Ça fait quoi?
@@ -71,6 +88,12 @@ huggingface-cli login
 **No GPU**
 ```bash
 python roto.py image.jpg 100,100 --device cpu
+```
+
+**CUDA non dispo (fallback auto)**
+```bash
+# Demande CUDA mais basculera sur CPU si indisponible
+python roto.py image.jpg 100,100 --device cuda
 ```
 
 ## Tester

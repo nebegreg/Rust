@@ -16,36 +16,44 @@ Requirements:
 
 import sys
 import argparse
-import numpy as np
-import cv2
 from pathlib import Path
+from typing import Iterable, List, Sequence, Tuple
+
+import cv2
+import numpy as np
+import torch
 
 
-def load_sam3(device="cuda"):
+def load_sam3(device: str = "cuda"):
     """Charge SAM3 - version la plus simple possible."""
     print("Loading SAM3...")
 
     try:
-        from sam3 import sam3_model_registry, Sam3ImagePredictor
+        from sam3 import Sam3ImagePredictor, sam3_model_registry
 
         # Modèle le plus petit pour commencer
         model_type = "sam3_hiera_small"
+
+        requested_device = device
+        if device == "cuda" and not torch.cuda.is_available():
+            print("  ⚠️ CUDA non disponible, bascule sur CPU")
+            requested_device = "cpu"
 
         print(f"  Model: {model_type}")
         sam_checkpoint = sam3_model_registry[model_type]()
         predictor = Sam3ImagePredictor(sam_checkpoint)
 
         # Move to device
-        predictor.model.to(device=device)
+        predictor.model.to(device=requested_device)
         predictor.model.eval()
 
-        print(f"✓ SAM3 loaded on {device}")
+        print(f"✓ SAM3 loaded on {requested_device}")
         return predictor
 
     except ImportError as e:
-        print(f"✗ SAM3 not installed!")
-        print(f"  Install: pip install git+https://github.com/facebookresearch/sam3.git")
-        print(f"  Auth: huggingface-cli login")
+        print("✗ SAM3 not installed!")
+        print("  Install: pip install git+https://github.com/facebookresearch/sam3.git")
+        print("  Auth: huggingface-cli login")
         print(f"  Error: {e}")
         sys.exit(1)
     except Exception as e:
@@ -53,7 +61,30 @@ def load_sam3(device="cuda"):
         sys.exit(1)
 
 
-def segment_image(predictor, image_path, points):
+def validate_points(points: Iterable[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """S'assure que les points sont des tuples d'entiers positifs."""
+
+    validated: List[Tuple[int, int]] = []
+    for idx, (x, y) in enumerate(points, start=1):
+        if not isinstance(x, int) or not isinstance(y, int):
+            raise ValueError(f"Point {idx} doit contenir des entiers (reçu: {x},{y})")
+        if x < 0 or y < 0:
+            raise ValueError(f"Point {idx} doit être positif (reçu: {x},{y})")
+        validated.append((x, y))
+    return validated
+
+
+def ensure_points_in_frame(points: Sequence[Tuple[int, int]], width: int, height: int) -> None:
+    """Valide que tous les points sont dans l'image."""
+
+    for idx, (x, y) in enumerate(points, start=1):
+        if not (0 <= x < width) or not (0 <= y < height):
+            raise ValueError(
+                f"Point {idx} ({x},{y}) est hors de l'image ({width}x{height})."
+            )
+
+
+def segment_image(predictor, image_path, points: Sequence[Tuple[int, int]]):
     """
     Segmente une image avec des points.
 
@@ -75,6 +106,8 @@ def segment_image(predictor, image_path, points):
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     print(f"  Image size: {image_rgb.shape[1]}x{image_rgb.shape[0]}")
+
+    ensure_points_in_frame(points, image_rgb.shape[1], image_rgb.shape[0])
 
     # Préparer points
     point_coords = np.array(points, dtype=np.float32)
@@ -106,9 +139,11 @@ def segment_image(predictor, image_path, points):
     return best_mask
 
 
-def save_mask(mask, output_path):
+def save_mask(mask, output_path: Path):
     """Sauvegarde le masque en PNG."""
     print(f"\nSaving mask: {output_path}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Convertir en uint8
     mask_uint8 = (mask * 255).astype(np.uint8)
@@ -130,12 +165,10 @@ def main():
 
     # Parser les points
     try:
-        points = []
-        for pt_str in args.points:
-            x, y = map(int, pt_str.split(","))
-            points.append((x, y))
-    except:
-        print("✗ Invalid points format. Use: x,y (e.g., 100,100)")
+        parsed_points = [tuple(map(int, pt_str.split(","))) for pt_str in args.points]
+        points = validate_points(parsed_points)
+    except ValueError as exc:
+        print(f"✗ Invalid points format. Use: x,y (e.g., 100,100). {exc}")
         sys.exit(1)
 
     if not points:
@@ -159,7 +192,7 @@ def main():
     mask = segment_image(predictor, image_path, points)
 
     # 3. Sauvegarder
-    save_mask(mask, args.output)
+    save_mask(mask, Path(args.output))
 
     print("\n" + "=" * 60)
     print("  ✓ SUCCESS")
