@@ -1,25 +1,47 @@
-# Ultimate Rotoscopy - Minimal Version
+# Ultimate Rotoscopy (reboot)
 
-**UN fichier. UNE tâche. Ça MARCHE.**
+**Reprise complète selon le `roadmap` : SAM3 + Depth Anything (V2/V3/AnyMoRe) + Matte Anything dans une GUI unique.**
 
-## Installation (2 étapes)
+## Nouvelle application GUI
 
 ```bash
-# 1. Installer SAM3
+pip install PySide6 opencv-python numpy torch
+# Modules modèle (installer ceux dont vous avez besoin)
 pip install git+https://github.com/facebookresearch/sam3.git
+pip install depth-anything-v3 depth-anything matte-anything transformers
 
-# 2. Authentifier HuggingFace
-huggingface-cli login
-# Entrer votre token
+python ultimate_roto.py
 ```
 
-## Usage
+Fonctionnalités clés :
+
+1. Sélection d'image, placement de points pour SAM3
+2. Lancement non bloquant de SAM3, Depth Anything (V3, V2 ou AnyMoRe) ou Matte Anything
+3. Sélecteur de périphérique (auto/CUDA/CPU) avec fallback automatique
+4. Overlay réglable et export des assets (mask, depth EXR, alpha, FBX mesh Flame-ready)
+5. Export Flame : AOV EXR + clip XML, FBX maillé à partir de la depth/masque
+
+## Script CLI minimal (legacy)
 
 ```bash
 python roto.py image.jpg 100,100 200,200 --output mask.png
 ```
 
-**C'est tout.**
+**Toujours là pour les tests rapides.**
+
+### Ancienne interface PySide6 (optionnelle)
+
+```bash
+pip install PySide6 opencv-python numpy torch
+pip install git+https://github.com/facebookresearch/sam3.git
+
+python rotoscope_gui.py
+```
+
+1. Ouvrez une image (PNG/JPG/TIF)
+2. Cliquez pour placer des points foreground
+3. Choisissez le périphérique (Auto, CUDA, CPU)
+4. Lancez « Segmenter » puis « Exporter le masque »
 
 ### Interface PySide6 (GUI)
 
